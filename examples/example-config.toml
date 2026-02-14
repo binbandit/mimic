@@ -1,0 +1,53 @@
+[variables]
+email = "john.doe@example.com"
+name = "John Doe"
+github_username = "johndoe"
+editor = "nvim"
+
+[[dotfiles]]
+source = "zsh/zshrc"
+target = "~/.zshrc"
+
+[[dotfiles]]
+source = "zsh/zshenv"
+target = "~/.zshenv"
+
+[[dotfiles]]
+source = "vim/vimrc"
+target = "~/.vimrc"
+
+[[dotfiles]]
+source = "git/gitconfig"
+target = "~/.gitconfig"
+
+[[dotfiles]]
+source = "tmux/tmux.conf"
+target = "~/.tmux.conf"
+
+[[packages.homebrew]]
+name = "git"
+type = "formula"
+
+[[packages.homebrew]]
+name = "neovim"
+type = "formula"
+
+[[packages.homebrew]]
+name = "tmux"
+type = "formula"
+
+[[packages.homebrew]]
+name = "fzf"
+type = "formula"
+
+[[packages.homebrew]]
+name = "ripgrep"
+type = "formula"
+
+[[packages.homebrew]]
+name = "docker"
+type = "cask"
+
+[[packages.homebrew]]
+name = "visual-studio-code"
+type = "cask"
