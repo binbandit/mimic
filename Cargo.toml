@@ -16,8 +16,10 @@ walkdir = "2.5"
 shellexpand = "3.1"
 directories = "5.0"
 whoami = "2.1.1"
+dialoguer = "0.11"
 
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3.14"
+regex = "1.11"

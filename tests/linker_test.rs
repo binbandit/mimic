@@ -86,23 +86,20 @@ fn test_target_exists_detection() {
     let source = temp.path().join("source.txt");
     let target = temp.path().join("target.txt");
 
-    // Create both files
     fs::write(&source, "source content").unwrap();
     fs::write(&target, "existing target").unwrap();
 
     let mut state = State::new();
     let result = create_symlink(&source, &target, &mut state);
 
-    // Should fail because target exists
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("exists") || err_msg.contains("target"),
-        "Error message should mention target exists: {}",
+        err_msg.contains("terminal") || err_msg.contains("IO error"),
+        "Error should indicate terminal is required for interactive resolution: {}",
         err_msg
     );
 
-    // State should not be modified
     assert_eq!(state.dotfiles.len(), 0);
 }
 
