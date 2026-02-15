@@ -203,6 +203,14 @@ pub fn create_symlink_with_resolution(
         }
     }
 
+    if let Some(parent) = expanded_target.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create parent directory: {}", parent.display())
+            })?;
+        }
+    }
+
     symlink(&expanded_source, &expanded_target).with_context(|| LinkError::SymlinkFailed {
         from: expanded_source.display().to_string(),
         to: expanded_target.display().to_string(),
