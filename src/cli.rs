@@ -1389,66 +1389,43 @@ impl Cli {
             }
         }
 
-        println!();
-        let mut removed = 0;
-        let mut errors = Vec::new();
+        let total = extra_formulas.len() + extra_casks.len();
 
-        for name in &extra_formulas {
-            if self.dry_run {
+        if self.dry_run {
+            println!();
+            for name in &extra_formulas {
                 println!("  {} Would uninstall {} (formula)", "→".bright_black(), name);
-                removed += 1;
-                continue;
             }
-            match homebrew.uninstall(name) {
-                Ok(()) => removed += 1,
-                Err(e) => {
-                    eprintln!("  {} Failed to uninstall {}: {}", "✗".red(), name, e);
-                    errors.push(name.to_string());
-                }
-            }
-        }
-
-        for name in &extra_casks {
-            if self.dry_run {
+            for name in &extra_casks {
                 println!("  {} Would uninstall {} (cask)", "→".bright_black(), name);
-                removed += 1;
-                continue;
             }
-            match homebrew.uninstall(name) {
-                Ok(()) => removed += 1,
-                Err(e) => {
-                    eprintln!("  {} Failed to uninstall {}: {}", "✗".red(), name, e);
-                    errors.push(name.to_string());
-                }
-            }
-        }
-
-        println!();
-        if errors.is_empty() {
-            if self.dry_run {
-                println!(
-                    "{}",
-                    format!("Dry run: {} packages would be removed", removed)
-                        .green()
-                        .bold()
-                );
-            } else {
-                println!(
-                    "{}",
-                    format!("✓ Removed {} packages", removed).green().bold()
-                );
-            }
-        } else {
+            println!();
             println!(
                 "{}",
-                format!(
-                    "⚠ Removed {} packages, {} failed",
-                    removed,
-                    errors.len()
-                )
-                .yellow()
-                .bold()
+                format!("Dry run: {} packages would be removed", total)
+                    .green()
+                    .bold()
             );
+            return Ok(());
+        }
+
+        println!();
+        let mut all_packages: Vec<&str> = extra_formulas.iter().map(|s| s.as_str()).collect();
+        all_packages.extend(extra_casks.iter().map(|s| s.as_str()));
+
+        match homebrew.uninstall_many(&all_packages) {
+            Ok(_) => {
+                println!(
+                    "{}",
+                    format!("✓ Removed {} packages", total).green().bold()
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    format!("✗ Failed to uninstall packages: {}", e).red().bold()
+                );
+            }
         }
 
         Ok(())

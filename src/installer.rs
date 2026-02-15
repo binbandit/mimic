@@ -71,22 +71,26 @@ impl HomebrewManager {
         Ok(installed.iter().any(|pkg| pkg == name))
     }
 
-    pub fn uninstall(&self, name: &str) -> Result<(), anyhow::Error> {
-        let spinner = Spinner::new(format!("Uninstalling {}...", name));
+    pub fn uninstall_many(&self, names: &[&str]) -> Result<Vec<String>, anyhow::Error> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let output = Command::new("brew").arg("uninstall").arg(name).output();
+        let spinner = Spinner::new(format!("Uninstalling {} packages...", names.len()));
+
+        let output = Command::new("brew").arg("uninstall").args(names).output();
 
         match output {
             Ok(output) if output.status.success() => {
-                spinner.finish_with_message(format!("✓ Uninstalled {}", name));
-                Ok(())
+                spinner.finish_with_message(format!("✓ Uninstalled {} packages", names.len()));
+                Ok(Vec::new())
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let exit_code = output.status.code().unwrap_or(-1);
-                spinner.finish_with_error(format!("Failed to uninstall {}", name));
+                spinner.finish_with_error(format!("brew uninstall failed (exit {})", exit_code));
                 Err(InstallError::CommandFailed {
-                    command: format!("brew uninstall {}", name),
+                    command: format!("brew uninstall {}", names.join(" ")),
                     exit_code,
                     stderr: stderr.to_string(),
                 }
