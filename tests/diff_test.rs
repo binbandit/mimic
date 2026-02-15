@@ -1,6 +1,7 @@
 use mimic::config::{Config, Dotfile, Package, Packages};
 use mimic::diff::{Change, DiffEngine};
 use mimic::installer::HomebrewManager;
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::symlink;
 use tempfile::TempDir;
@@ -23,6 +24,7 @@ fn test_diff_detects_new_dotfile() {
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
+        hosts: HashMap::new(),
     };
 
     let engine = DiffEngine::new();
@@ -58,6 +60,7 @@ fn test_diff_symlink_already_correct() {
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
+        hosts: HashMap::new(),
     };
 
     let engine = DiffEngine::new();
@@ -94,6 +97,7 @@ fn test_diff_wrong_symlink_target() {
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
+        hosts: HashMap::new(),
     };
 
     let engine = DiffEngine::new();
@@ -128,6 +132,7 @@ fn test_diff_target_is_regular_file() {
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
+        hosts: HashMap::new(),
     };
 
     let engine = DiffEngine::new();
@@ -156,6 +161,7 @@ fn test_diff_package_not_installed() {
         packages: Packages {
             homebrew: vec![package],
         },
+        hosts: HashMap::new(),
     };
 
     let homebrew = HomebrewManager::new();
@@ -198,6 +204,7 @@ fn test_diff_multiple_changes() {
             },
         ],
         packages: Packages::default(),
+        hosts: HashMap::new(),
     };
 
     let engine = DiffEngine::new();
@@ -236,6 +243,7 @@ fn test_diff_pretty_format() {
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
+        hosts: HashMap::new(),
     };
 
     let engine = DiffEngine::new();

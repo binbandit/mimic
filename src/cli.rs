@@ -19,6 +19,9 @@ pub struct Cli {
     #[arg(short, long, global = true, help = "Path to config file")]
     pub config: Option<PathBuf>,
 
+    #[arg(short = 'H', long, global = true, help = "Select host configuration")]
+    pub host: Option<String>,
+
     #[arg(short, long, global = true, help = "Skip confirmation prompts")]
     pub yes: bool,
 
@@ -50,6 +53,21 @@ pub enum Commands {
 
     #[command(about = "Undo last apply operation")]
     Undo,
+
+    #[command(about = "Manage host configurations", subcommand)]
+    Hosts(HostCommands),
+}
+
+#[derive(Subcommand)]
+pub enum HostCommands {
+    #[command(about = "List all configured hosts")]
+    List,
+
+    #[command(about = "Show merged configuration for a specific host")]
+    Show {
+        #[arg(help = "Name of the host to show")]
+        name: String,
+    },
 }
 
 impl Cli {
@@ -59,6 +77,7 @@ impl Cli {
             Commands::Diff => self.run_diff(),
             Commands::Status => self.run_status(),
             Commands::Undo => self.run_undo(),
+            Commands::Hosts(hosts_cmd) => self.run_hosts(hosts_cmd),
         }
     }
 
@@ -97,7 +116,11 @@ impl Cli {
         PathBuf::from(".mimic/state.toml")
     }
 
-    fn run_diff(&self) -> anyhow::Result<()> {
+    fn detect_hostname() -> String {
+        whoami::hostname().unwrap_or_else(|_| "unknown".to_string())
+    }
+
+    fn resolve_config_and_host(&self) -> anyhow::Result<(Config, Option<String>)> {
         let config_path = self.find_config()?;
 
         if self.verbose {
@@ -108,7 +131,94 @@ impl Cli {
             );
         }
 
+        let base_config = Config::from_file(&config_path)?;
+
+        if base_config.hosts.is_empty() {
+            return Ok((base_config, None));
+        }
+
+        let host_name = if let Some(host) = &self.host {
+            host.clone()
+        } else {
+            Self::detect_hostname()
+        };
+
+        if self.verbose {
+            println!("{} {}", "Using host:".bright_black(), host_name);
+        }
+
+        let merged_config = base_config.with_host(&host_name)?;
+        Ok((merged_config, Some(host_name)))
+    }
+
+    fn run_hosts(&self, cmd: &HostCommands) -> anyhow::Result<()> {
+        let config_path = self.find_config()?;
         let config = Config::from_file(&config_path)?;
+
+        match cmd {
+            HostCommands::List => {
+                if config.hosts.is_empty() {
+                    println!("{}", "No hosts configured.".yellow());
+                    println!("Add a [hosts.name] section to your config file.");
+                    return Ok(());
+                }
+
+                println!("{}", "Configured hosts:".bold());
+                for name in config.host_names() {
+                    if let Some(host_config) = config.hosts.get(&name) {
+                        let roles = if host_config.roles.is_empty() {
+                            "no roles".bright_black().to_string()
+                        } else {
+                            host_config.roles.join(", ")
+                        };
+                        println!("  {} ({})", name.green(), roles);
+                    }
+                }
+                Ok(())
+            }
+            HostCommands::Show { name } => {
+                let merged = config.with_host(name)?;
+
+                println!("{} {}", "Host:".bold(), name.green());
+                println!();
+
+                println!("{}", "Variables:".bold());
+                if merged.variables.is_empty() {
+                    println!("  {}", "(none)".bright_black());
+                } else {
+                    for (key, value) in &merged.variables {
+                        println!("  {} = {}", key, value);
+                    }
+                }
+                println!();
+
+                println!("{}", "Dotfiles:".bold());
+                if merged.dotfiles.is_empty() {
+                    println!("  {}", "(none)".bright_black());
+                } else {
+                    for dotfile in &merged.dotfiles {
+                        println!("  {} → {}", dotfile.source, dotfile.target);
+                    }
+                }
+                println!();
+
+                println!("{}", "Packages:".bold());
+                if merged.packages.homebrew.is_empty() {
+                    println!("  {}", "(none)".bright_black());
+                } else {
+                    for package in &merged.packages.homebrew {
+                        println!("  {} ({})", package.name, package.pkg_type);
+                    }
+                }
+
+                Ok(())
+            }
+        }
+    }
+
+    fn run_diff(&self) -> anyhow::Result<()> {
+        let (config, _host_name) = self.resolve_config_and_host()?;
+
         let diff_engine = DiffEngine::new();
         let changes = diff_engine.diff(&config)?;
 
@@ -145,17 +255,8 @@ impl Cli {
     }
 
     fn run_apply(&self) -> anyhow::Result<()> {
-        let config_path = self.find_config()?;
+        let (config, host_name) = self.resolve_config_and_host()?;
 
-        if self.verbose {
-            println!(
-                "{} {}",
-                "Loading config:".bright_black(),
-                config_path.display()
-            );
-        }
-
-        let config = Config::from_file(&config_path)?;
         let diff_engine = DiffEngine::new();
         let changes = diff_engine.diff(&config)?;
 
@@ -191,6 +292,8 @@ impl Cli {
 
         let state_path = self.get_state_path();
         let mut state = State::load(&state_path).unwrap_or_else(|_| State::new());
+
+        state.active_host = host_name;
 
         println!();
         println!("{}", "Applying changes...".bold());

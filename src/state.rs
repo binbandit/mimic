@@ -19,6 +19,7 @@ pub struct PackageState {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct State {
+    pub active_host: Option<String>,
     pub applied_commit: Option<String>,
     pub applied_at: DateTime<Utc>,
     pub dotfiles: Vec<DotfileState>,
@@ -29,6 +30,7 @@ impl State {
     /// Create a new empty state
     pub fn new() -> Self {
         Self {
+            active_host: None,
             applied_commit: None,
             applied_at: Utc::now(),
             dotfiles: Vec::new(),

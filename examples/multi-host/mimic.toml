@@ -1,0 +1,124 @@
+# Multi-Host Configuration Example
+# This example demonstrates managing multiple machines from a single config
+
+# Shared defaults for all hosts
+[variables]
+editor = "nvim"
+shell = "fish"
+theme = "dracula"
+
+# Shared dotfiles (applied to all hosts)
+[[dotfiles]]
+source = "dotfiles/gitconfig"
+target = "~/.gitconfig"
+
+[[dotfiles]]
+source = "dotfiles/vimrc"
+target = "~/.vimrc"
+
+# Shared packages (installed on all hosts)
+[[packages.homebrew]]
+name = "git"
+type = "formula"
+
+[[packages.homebrew]]
+name = "curl"
+type = "formula"
+
+# Personal laptop configuration
+[hosts.personal-macbook]
+roles = ["personal", "mac", "portable"]
+
+[hosts.personal-macbook.variables]
+email = "user@personal.com"
+openai_model = "gpt-5-nano"
+git_signing_key = "ABC123"
+
+[[hosts.personal-macbook.dotfiles]]
+source = "dotfiles/personal-zshrc"
+target = "~/.zshrc"
+
+[[hosts.personal-macbook.dotfiles]]
+source = "dotfiles/personal-ssh-config"
+target = "~/.ssh/config"
+
+[[hosts.personal-macbook.packages.homebrew]]
+name = "neovim"
+type = "formula"
+
+[[hosts.personal-macbook.packages.homebrew]]
+name = "spotify"
+type = "cask"
+
+[[hosts.personal-macbook.packages.homebrew]]
+name = "discord"
+type = "cask"
+
+# Work laptop configuration
+[hosts.work-macbook]
+roles = ["work", "mac", "portable"]
+
+[hosts.work-macbook.variables]
+email = "user@corp.com"
+http_proxy = "http://localhost:3128"
+git_signing_key = "DEF456"
+
+[[hosts.work-macbook.dotfiles]]
+source = "dotfiles/work-zshrc"
+target = "~/.zshrc"
+
+[[hosts.work-macbook.dotfiles]]
+source = "dotfiles/work-ssh-config"
+target = "~/.ssh/config"
+
+[[hosts.work-macbook.packages.homebrew]]
+name = "neovim"
+type = "formula"
+
+[[hosts.work-macbook.packages.homebrew]]
+name = "slack"
+type = "cask"
+
+[[hosts.work-macbook.packages.homebrew]]
+name = "zoom"
+type = "cask"
+
+[[hosts.work-macbook.packages.homebrew]]
+name = "corporate-vpn"
+type = "cask"
+
+# Home desktop (Linux)
+[hosts.home-desktop]
+roles = ["personal", "linux", "desktop", "powerful"]
+
+[hosts.home-desktop.variables]
+email = "user@personal.com"
+display_scale = "1.5"
+
+[[hosts.home-desktop.dotfiles]]
+source = "dotfiles/personal-bashrc"
+target = "~/.bashrc"
+
+[[hosts.home-desktop.dotfiles]]
+source = "dotfiles/i3-config"
+target = "~/.config/i3/config"
+
+# Server configuration (minimal)
+[hosts.home-server]
+roles = ["server", "linux", "headless"]
+
+[hosts.home-server.variables]
+email = "admin@homelab.local"
+monitoring_enabled = "true"
+
+[[hosts.home-server.dotfiles]]
+source = "dotfiles/server-bashrc"
+target = "~/.bashrc"
+
+[[hosts.home-server.packages.homebrew]]
+name = "htop"
+type = "formula"
+
+[[hosts.home-server.packages.homebrew]]
+name = "tmux"
+type = "formula"
