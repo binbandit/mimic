@@ -142,7 +142,7 @@ pub fn create_symlink_with_resolution(
 
     let mut backup_path_str = None;
 
-    if expanded_target.exists() {
+    if expanded_target.exists() || expanded_target.is_symlink() {
         let resolution = resolve_conflict(&expanded_target, &expanded_source, apply_to_all)?;
 
         match resolution {
@@ -158,8 +158,11 @@ pub fn create_symlink_with_resolution(
                 })?;
             }
             ConflictResolution::Backup => {
-                let backup_path = backup_file(&expanded_target)?;
-                backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                // Only back up if the target has readable content (not a dangling symlink)
+                if expanded_target.exists() {
+                    let backup_path = backup_file(&expanded_target)?;
+                    backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                }
                 fs::remove_file(&expanded_target).with_context(|| {
                     format!(
                         "Failed to remove original file after backup: {}",
@@ -180,8 +183,11 @@ pub fn create_symlink_with_resolution(
                     })?;
                 }
                 ApplyToAllChoice::Backup => {
-                    let backup_path = backup_file(&expanded_target)?;
-                    backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                    // Only back up if the target has readable content (not a dangling symlink)
+                    if expanded_target.exists() {
+                        let backup_path = backup_file(&expanded_target)?;
+                        backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                    }
                     fs::remove_file(&expanded_target).with_context(|| {
                         format!(
                             "Failed to remove original file after backup: {}",
@@ -278,7 +284,7 @@ fn apply_template_dotfile(
 
     let mut backup_path_str = None;
 
-    if target.exists() {
+    if target.exists() || target.is_symlink() {
         let resolution = resolve_conflict(&target, &temp_path, apply_to_all)?;
 
         match resolution {
@@ -291,8 +297,11 @@ fn apply_template_dotfile(
                 })?;
             }
             ConflictResolution::Backup => {
-                let backup_path = backup_file(&target)?;
-                backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                // Only back up if the target has readable content (not a dangling symlink)
+                if target.exists() {
+                    let backup_path = backup_file(&target)?;
+                    backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                }
                 fs::remove_file(&target).with_context(|| {
                     format!(
                         "Failed to remove original file after backup: {}",
@@ -310,8 +319,11 @@ fn apply_template_dotfile(
                     })?;
                 }
                 ApplyToAllChoice::Backup => {
-                    let backup_path = backup_file(&target)?;
-                    backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                    // Only back up if the target has readable content (not a dangling symlink)
+                    if target.exists() {
+                        let backup_path = backup_file(&target)?;
+                        backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                    }
                     fs::remove_file(&target).with_context(|| {
                         format!(
                             "Failed to remove original file after backup: {}",
