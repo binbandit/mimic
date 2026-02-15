@@ -156,13 +156,24 @@ impl Cli {
             return Ok(cwd_config);
         }
 
-        if let Some(config_dir) = directories::BaseDirs::new().map(|dirs| dirs.config_dir().join("mimic/config.toml"))
-            && config_dir.exists() {
-                return Ok(config_dir);
+        if let Some(base_dirs) = directories::BaseDirs::new() {
+            let home = base_dirs.home_dir();
+
+            let candidates = [
+                base_dirs.config_dir().join("mimic/config.toml"),
+                home.join(".dots/mimic.toml"),
+                home.join(".dotfiles/mimic.toml"),
+            ];
+
+            for candidate in &candidates {
+                if candidate.exists() {
+                    return Ok(candidate.clone());
+                }
             }
+        }
 
         Err(anyhow::anyhow!(
-            "Config file not found. Searched:\n  - ./mimic.toml\n  - ~/.config/mimic/config.toml\n\nUse --config to specify a custom path."
+            "Config file not found. Searched:\n  - ./mimic.toml\n  - ~/.config/mimic/config.toml\n  - ~/.dots/mimic.toml\n  - ~/.dotfiles/mimic.toml\n\nUse --config to specify a custom path."
         ))
     }
 
