@@ -1,3 +1,9 @@
+use mimic::cli;
+use std::process;
+
 fn main() {
-    println!("Hello, world!");
+    match cli::run() {
+        Ok(()) => process::exit(0),
+        Err(code) => process::exit(code),
+    }
 }
