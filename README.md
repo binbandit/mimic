@@ -267,7 +267,7 @@ cp ~/.local/share/chezmoi/dot_zshrc ~/dotfiles/dotfiles/zshrc
 cp ~/.local/share/chezmoi/dot_gitconfig ~/dotfiles/dotfiles/gitconfig
 ```
 
-For templated files in chezmoi, you'll need to manually resolve the templates or wait for mimic's template feature (Phase 2).
+For templated files in chezmoi, convert them to Handlebars syntax (mimic supports `.tmpl` and `.hbs` files with variable substitution).
 
 ### Scenario 3: Dotfiles Scattered in Home Directory
 
@@ -879,15 +879,6 @@ mimic follows these principles:
 3. **Additive only** - Install declared packages, never auto-uninstall
 4. **Transparent** - State file shows exactly what's managed
 5. **Recoverable** - Undo restores previous state
-
-## Roadmap
-
-See the project plan for Phase 2 features:
-- Multi-machine support with host-specific configurations
-- Template file generation with variable substitution in file contents
-- Additional package managers (apt, dnf, pacman)
-- Git integration for dotfile repo management
-- Pre/post hooks for custom scripts
 
 ## License
 

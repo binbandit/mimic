@@ -9,7 +9,7 @@ This guide helps you understand how mimic compares to other popular dotfile mana
 | **Complexity** | Low | Low | Medium | High | Low |
 | **Learning Curve** | Gentle | Minimal | Moderate | Steep | Gentle |
 | **Package Management** | Yes (Homebrew) | No | No | Yes (Nix) | No |
-| **Templating** | Planned | No | Yes | Yes | Yes |
+| **Templating** | Yes | No | Yes | Yes | Yes |
 | **Multi-machine** | Yes (hosts) | Manual | Yes | Yes | Yes |
 | **State Tracking** | Yes | No | Yes | Yes | No |
 | **Secrets Management** | Detection only | No | Yes | Yes | Yes |
@@ -317,24 +317,6 @@ Choose mimic if you:
 - You want to use `$HOME` as your git repo
 - You need built-in encryption
 - You like managing dotfiles with git directly
-
----
-
-## Feature Roadmap
-
-mimic is actively developed. Planned features include:
-
-**Phase 2 (Planned):**
-- Template file generation (Handlebars)
-- Additional package managers (apt, dnf, pacman)
-- Pre/post hooks for custom scripts
-- Git integration helpers
-
-**Phase 3 (Future):**
-- Secrets management (not just detection)
-- File permission management
-- Script execution
-- Plugin system
 
 ---
 

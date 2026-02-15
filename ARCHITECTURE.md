@@ -218,7 +218,7 @@ pub fn render_template(template: &str, config: &Config) -> Result<String>
 **Design decisions:**
 - Strict mode prevents silent failures from typos
 - User variables override system variables
-- Future Phase 2: template file contents, not just paths
+- Supports template file contents with Handlebars (`.tmpl` and `.hbs` files)
 
 ### Linker Engine (`src/linker.rs`)
 
@@ -549,19 +549,6 @@ This shows how data flows through the system during `mimic apply`:
 - `regex` - Pattern matching in tests
 - `glob` - File pattern matching
 
-## Phase 2 Roadmap
-
-Features deferred for future development:
-
-1. **Multi-machine support** - Host-specific configs with inheritance
-2. **Template file generation** - Substitute variables in dotfile contents
-3. **Additional package managers** - apt, dnf, pacman support
-4. **Git integration** - Clone/pull dotfile repos, commit state changes
-5. **Pre/post hooks** - Run custom scripts before/after apply
-6. **Selective apply** - Apply only dotfiles or only packages
-7. **Diff filtering** - Show only certain resource types
-8. **Performance** - Parallel package installation, async operations
-
 ## Performance Characteristics
 
 - **Config parsing:** O(n) where n = lines in config file
@@ -578,11 +565,3 @@ Bottleneck: Homebrew package checks (external command execution).
 - State file: Stored in `~/.config/mimic/` (user-only access)
 - Backups: Created in same directory as target (preserves permissions)
 - No elevated privileges required (except for Homebrew, which handles its own sudo)
-
-## Future Architecture Improvements
-
-1. **Parallel package operations** - Use async/await for concurrent installs
-2. **Plugin system** - Custom package managers via traits
-3. **Config schema validation** - JSON Schema or similar for better error messages
-4. **Incremental state** - Track individual operations, not just final state
-5. **Rollback to specific snapshot** - Multi-level undo with history

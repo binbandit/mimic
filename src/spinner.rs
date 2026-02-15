@@ -157,23 +157,42 @@ mod tests {
 
     #[test]
     fn test_should_show_spinner_in_ci() {
+        let original = std::env::var("CI").ok();
+
         unsafe {
-            env::set_var("CI", "true");
+            std::env::set_var("CI", "true");
         }
-        let result = should_show_spinner();
-        assert!(!result, "Spinner should be hidden in CI environment");
+        assert!(
+            !should_show_spinner(),
+            "Spinner should be hidden in CI environment"
+        );
+
         unsafe {
-            env::remove_var("CI");
+            match original {
+                Some(val) => std::env::set_var("CI", val),
+                None => std::env::remove_var("CI"),
+            }
         }
     }
 
     #[test]
     fn test_should_show_spinner_not_in_ci() {
+        let original = std::env::var("CI").ok();
+
         unsafe {
-            env::remove_var("CI");
+            std::env::remove_var("CI");
         }
-        let result = should_show_spinner();
-        assert!(result, "Spinner should be shown when not in CI");
+        assert!(
+            should_show_spinner(),
+            "Spinner should be shown when not in CI"
+        );
+
+        unsafe {
+            match original {
+                Some(val) => std::env::set_var("CI", val),
+                None => std::env::remove_var("CI"),
+            }
+        }
     }
 
     #[test]
