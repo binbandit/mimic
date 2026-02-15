@@ -207,8 +207,13 @@ impl Config {
 
         // Resolve relative source paths against the config file's directory
         if let Some(config_dir) = path_ref.parent() {
-            // Canonicalize the config dir so relative paths become fully absolute
-            let config_dir = config_dir.canonicalize().unwrap_or_else(|_| config_dir.to_path_buf());
+            // Canonicalize the config dir so relative paths become fully absolute.
+            // If the parent is empty (relative config path like "mimic.toml"),
+            // canonicalize fails, so fall back to the current working directory.
+            let config_dir = config_dir
+                .canonicalize()
+                .or_else(|_| std::env::current_dir())
+                .unwrap_or_else(|_| config_dir.to_path_buf());
             config.resolve_source_paths(&config_dir);
         }
 
