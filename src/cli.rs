@@ -1228,10 +1228,6 @@ impl Cli {
             })?;
             let config = Config::from_file(&config_path)?;
 
-            let config_dir = config_path
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("Config file has no parent directory"))?;
-
             for dotfile in &config.dotfiles {
                 let config_target = if dotfile.target.starts_with("~/") {
                     if let Some(home) = directories::BaseDirs::new() {
@@ -1247,18 +1243,13 @@ impl Cli {
                 };
 
                 if config_target == expanded_target || dotfile.target == target {
-                    let source = PathBuf::from(&dotfile.source);
-                    let resolved_source = if source.is_absolute() {
-                        source
-                    } else {
-                        config_dir.join(source)
-                    };
-                    source_path = Some(resolved_source.to_string_lossy().to_string());
+                    // Source paths are already resolved to absolute by Config::from_file
+                    source_path = Some(dotfile.source.clone());
                     if self.verbose {
                         println!(
                             "{} Found in config: {}",
                             "→".bright_black(),
-                            resolved_source.display()
+                            dotfile.source
                         );
                     }
                     break;

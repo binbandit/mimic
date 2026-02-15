@@ -1,4 +1,5 @@
 use mimic::config::Config;
+use std::path::Path;
 
 #[test]
 fn test_parse_valid_config() {
@@ -261,4 +262,218 @@ fn test_mixed_package_formats() {
     assert_eq!(normalized.homebrew[1].name, "git");
     assert_eq!(normalized.homebrew[1].pkg_type, "formula");
     assert!(normalized.homebrew[1].only_roles.is_none());
+}
+
+#[test]
+fn test_resolve_source_paths_makes_relative_paths_absolute() {
+    let toml_str = r#"
+        [[dotfiles]]
+        source = "dotfiles/zshrc"
+        target = "~/.zshrc"
+
+        [[dotfiles]]
+        source = "vim/vimrc"
+        target = "~/.vimrc"
+    "#;
+
+    let mut config = Config::from_str(toml_str).unwrap();
+    config.resolve_source_paths(Path::new("/home/user/configs"));
+
+    assert_eq!(
+        config.dotfiles[0].source,
+        "/home/user/configs/dotfiles/zshrc"
+    );
+    assert_eq!(config.dotfiles[1].source, "/home/user/configs/vim/vimrc");
+}
+
+#[test]
+fn test_resolve_source_paths_preserves_absolute_paths() {
+    let toml_str = r#"
+        [[dotfiles]]
+        source = "/absolute/path/zshrc"
+        target = "~/.zshrc"
+    "#;
+
+    let mut config = Config::from_str(toml_str).unwrap();
+    config.resolve_source_paths(Path::new("/home/user/configs"));
+
+    assert_eq!(config.dotfiles[0].source, "/absolute/path/zshrc");
+}
+
+#[test]
+fn test_resolve_source_paths_preserves_tilde_paths() {
+    let toml_str = r#"
+        [[dotfiles]]
+        source = "~/my-dotfiles/zshrc"
+        target = "~/.zshrc"
+    "#;
+
+    let mut config = Config::from_str(toml_str).unwrap();
+    config.resolve_source_paths(Path::new("/home/user/configs"));
+
+    assert_eq!(config.dotfiles[0].source, "~/my-dotfiles/zshrc");
+}
+
+#[test]
+fn test_resolve_source_paths_preserves_env_var_paths() {
+    let toml_str = r#"
+        [[dotfiles]]
+        source = "$HOME/dotfiles/zshrc"
+        target = "~/.zshrc"
+    "#;
+
+    let mut config = Config::from_str(toml_str).unwrap();
+    config.resolve_source_paths(Path::new("/home/user/configs"));
+
+    assert_eq!(config.dotfiles[0].source, "$HOME/dotfiles/zshrc");
+}
+
+#[test]
+fn test_resolve_source_paths_in_host_dotfiles() {
+    let toml_str = r#"
+        [[dotfiles]]
+        source = "common/zshrc"
+        target = "~/.zshrc"
+
+        [hosts.laptop]
+        roles = ["personal"]
+
+        [[hosts.laptop.dotfiles]]
+        source = "laptop/gitconfig"
+        target = "~/.gitconfig"
+    "#;
+
+    let mut config = Config::from_str(toml_str).unwrap();
+    config.resolve_source_paths(Path::new("/home/user/configs"));
+
+    assert_eq!(config.dotfiles[0].source, "/home/user/configs/common/zshrc");
+
+    let laptop = config.hosts.get("laptop").unwrap();
+    assert_eq!(
+        laptop.dotfiles[0].source,
+        "/home/user/configs/laptop/gitconfig"
+    );
+}
+
+#[test]
+fn test_from_file_resolves_relative_source_paths() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let config_dir = temp_dir.path().join("myconfigs");
+    fs::create_dir(&config_dir).unwrap();
+
+    let config_path = config_dir.join("mimic.toml");
+    fs::write(
+        &config_path,
+        r#"
+[[dotfiles]]
+source = "dotfiles/zshrc"
+target = "~/.zshrc"
+
+[[dotfiles]]
+source = "/absolute/vimrc"
+target = "~/.vimrc"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::from_file(&config_path).unwrap();
+
+    // Relative path should be resolved against config file's directory
+    let resolved = &config.dotfiles[0].source;
+    assert!(
+        Path::new(resolved).is_absolute(),
+        "Relative source path should be resolved to absolute, got: {}",
+        resolved
+    );
+    assert!(
+        resolved.ends_with("myconfigs/dotfiles/zshrc"),
+        "Should resolve relative to config dir, got: {}",
+        resolved
+    );
+
+    // Absolute path should remain unchanged
+    assert_eq!(config.dotfiles[1].source, "/absolute/vimrc");
+}
+
+#[test]
+fn test_from_file_resolves_host_dotfile_paths() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let config_dir = temp_dir.path().join("myconfigs");
+    fs::create_dir(&config_dir).unwrap();
+
+    let config_path = config_dir.join("mimic.toml");
+    fs::write(
+        &config_path,
+        r#"
+[hosts.work]
+roles = ["work"]
+
+[[hosts.work.dotfiles]]
+source = "work/gitconfig"
+target = "~/.gitconfig"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::from_file(&config_path).unwrap();
+
+    let work = config.hosts.get("work").unwrap();
+    let resolved = &work.dotfiles[0].source;
+    assert!(
+        Path::new(resolved).is_absolute(),
+        "Host dotfile relative source path should be resolved to absolute, got: {}",
+        resolved
+    );
+    assert!(
+        resolved.ends_with("myconfigs/work/gitconfig"),
+        "Should resolve relative to config dir, got: {}",
+        resolved
+    );
+}
+
+#[test]
+fn test_with_host_preserves_resolved_paths() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let config_dir = temp_dir.path().join("myconfigs");
+    fs::create_dir(&config_dir).unwrap();
+
+    let config_path = config_dir.join("mimic.toml");
+    fs::write(
+        &config_path,
+        r#"
+[[dotfiles]]
+source = "common/zshrc"
+target = "~/.zshrc"
+
+[hosts.work]
+roles = ["work"]
+
+[[hosts.work.dotfiles]]
+source = "work/gitconfig"
+target = "~/.gitconfig"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::from_file(&config_path).unwrap();
+    let merged = config.with_host("work").unwrap();
+
+    // Both base and host dotfiles should have resolved paths
+    assert_eq!(merged.dotfiles.len(), 2);
+    for dotfile in &merged.dotfiles {
+        assert!(
+            Path::new(&dotfile.source).is_absolute(),
+            "Merged dotfile source should be absolute, got: {}",
+            dotfile.source
+        );
+    }
 }
