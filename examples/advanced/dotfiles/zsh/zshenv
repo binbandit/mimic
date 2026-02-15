@@ -1,0 +1,11 @@
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_CACHE_HOME="$HOME/.cache"
+
+if [[ -d "$HOME/.cargo" ]]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
+if [[ -d "/opt/homebrew/bin" ]]; then
+    export PATH="/opt/homebrew/bin:$PATH"
+fi

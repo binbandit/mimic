@@ -1,0 +1,77 @@
+[user]
+    name = Jane Smith
+    email = jane.smith@example.com
+    signingkey = ~/.ssh/id_ed25519.pub
+
+[core]
+    editor = code --wait
+    autocrlf = input
+    excludesfile = ~/.gitignore_global
+    pager = bat
+
+[gpg]
+    format = ssh
+
+[commit]
+    gpgsign = true
+
+[init]
+    defaultBranch = main
+
+[pull]
+    rebase = true
+
+[push]
+    default = current
+    autoSetupRemote = true
+    followTags = true
+
+[fetch]
+    prune = true
+    pruneTags = true
+
+[alias]
+    st = status -sb
+    co = checkout
+    cob = checkout -b
+    br = branch
+    ci = commit
+    cia = commit --amend
+    cian = commit --amend --no-edit
+    unstage = reset HEAD --
+    last = log -1 HEAD
+    visual = log --oneline --graph --all --decorate
+    lg = log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
+    contributors = shortlog --summary --numbered
+    cleanup = !git branch --merged | grep -v '\\*\\|main\\|master\\|develop' | xargs -n 1 git branch -d
+
+[color]
+    ui = auto
+    branch = auto
+    diff = auto
+    status = auto
+
+[color "diff"]
+    meta = yellow bold
+    commit = green bold
+    frag = magenta bold
+    old = red bold
+    new = green bold
+    whitespace = red reverse
+
+[diff]
+    tool = vscode
+    algorithm = histogram
+
+[difftool "vscode"]
+    cmd = code --wait --diff $LOCAL $REMOTE
+
+[merge]
+    tool = vscode
+    conflictstyle = diff3
+
+[mergetool "vscode"]
+    cmd = code --wait $MERGED
+
+[rerere]
+    enabled = true

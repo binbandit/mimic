@@ -1,0 +1,23 @@
+export EDITOR="nvim"
+export VISUAL="$EDITOR"
+
+export PATH="$HOME/bin:/usr/local/bin:$PATH"
+
+alias ls='ls -G'
+alias ll='ls -lah'
+alias grep='grep --color=auto'
+
+autoload -Uz compinit
+compinit
+
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_FIND_NO_DUPS
+setopt HIST_SAVE_NO_DUPS
+
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+
+if command -v starship &> /dev/null; then
+    eval "$(starship init zsh)"
+fi

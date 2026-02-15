@@ -45,7 +45,7 @@ pub enum Commands {
     #[command(about = "Show preview of changes without applying")]
     Diff,
 
-    #[command(about = "Show current system state (not yet implemented)")]
+    #[command(about = "Check for drift from last applied configuration")]
     Status,
 
     #[command(about = "Undo last apply operation")]

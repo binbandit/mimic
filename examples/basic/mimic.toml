@@ -1,0 +1,28 @@
+[variables]
+email = "john.doe@example.com"
+name = "John Doe"
+editor = "nvim"
+
+[[dotfiles]]
+source = "dotfiles/zshrc"
+target = "~/.zshrc"
+
+[[dotfiles]]
+source = "dotfiles/gitconfig"
+target = "~/.gitconfig"
+
+[[dotfiles]]
+source = "dotfiles/vimrc"
+target = "~/.vimrc"
+
+[[packages.homebrew]]
+name = "git"
+type = "formula"
+
+[[packages.homebrew]]
+name = "neovim"
+type = "formula"
+
+[[packages.homebrew]]
+name = "ripgrep"
+type = "formula"

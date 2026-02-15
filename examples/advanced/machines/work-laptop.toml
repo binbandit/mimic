@@ -1,0 +1,23 @@
+[variables]
+email = "jane.smith@work.com"
+editor = "vim"
+
+[[dotfiles]]
+source = "dotfiles/zsh/zshrc"
+target = "~/.zshrc"
+
+[[dotfiles]]
+source = "dotfiles/git/gitconfig"
+target = "~/.gitconfig"
+
+[[packages.homebrew]]
+name = "git"
+type = "formula"
+
+[[packages.homebrew]]
+name = "tmux"
+type = "formula"
+
+[[packages.homebrew]]
+name = "docker"
+type = "cask"

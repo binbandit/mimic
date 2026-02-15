@@ -1,0 +1,36 @@
+[user]
+    name = John Doe
+    email = john.doe@example.com
+
+[core]
+    editor = nvim
+    autocrlf = input
+    excludesfile = ~/.gitignore_global
+
+[init]
+    defaultBranch = main
+
+[pull]
+    rebase = true
+
+[push]
+    default = current
+    autoSetupRemote = true
+
+[alias]
+    st = status
+    co = checkout
+    br = branch
+    ci = commit
+    unstage = reset HEAD --
+    last = log -1 HEAD
+    visual = log --oneline --graph --all
+
+[color]
+    ui = auto
+
+[diff]
+    tool = vimdiff
+
+[merge]
+    conflictstyle = diff3

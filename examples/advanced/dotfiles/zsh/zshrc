@@ -1,0 +1,42 @@
+export EDITOR="code --wait"
+export VISUAL="$EDITOR"
+export SHELL="/bin/zsh"
+
+export PATH="$HOME/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+
+alias ls='exa'
+alias ll='exa -lah --git'
+alias la='exa -la'
+alias lt='exa --tree'
+alias cat='bat'
+alias grep='rg'
+
+alias gst='git status'
+alias gco='git checkout'
+alias gpl='git pull'
+alias gps='git push'
+
+autoload -Uz compinit
+compinit -d ~/.zcompdump
+
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_FIND_NO_DUPS
+setopt HIST_SAVE_NO_DUPS
+setopt SHARE_HISTORY
+setopt APPEND_HISTORY
+setopt INC_APPEND_HISTORY
+
+HISTFILE=~/.zsh_history
+HISTSIZE=50000
+SAVEHIST=50000
+
+if command -v starship &> /dev/null; then
+    eval "$(starship init zsh)"
+fi
+
+if [ -f ~/.fzf.zsh ]; then
+    source ~/.fzf.zsh
+fi
+
+export FZF_DEFAULT_COMMAND='rg --files --hidden --follow --glob "!.git/*"'
+export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border'
