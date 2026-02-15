@@ -102,28 +102,32 @@ pub struct Packages {
 
 impl Packages {
     /// Merge simple format (brew/cask) into homebrew Vec<Package>
-    /// This allows both formats to coexist
+    /// This allows both formats to coexist, deduplicating by name
     pub fn normalized(&self) -> Self {
         let mut homebrew = self.homebrew.clone();
         
-        // Add brew formulas
+        // Add brew formulas (skip if already present in homebrew)
         for name in &self.brew {
-            homebrew.push(Package {
-                name: name.clone(),
-                pkg_type: "formula".to_string(),
-                only_roles: None,
-                skip_roles: None,
-            });
+            if !homebrew.iter().any(|p| p.name == *name) {
+                homebrew.push(Package {
+                    name: name.clone(),
+                    pkg_type: "formula".to_string(),
+                    only_roles: None,
+                    skip_roles: None,
+                });
+            }
         }
         
-        // Add casks
+        // Add casks (skip if already present in homebrew)
         for name in &self.cask {
-            homebrew.push(Package {
-                name: name.clone(),
-                pkg_type: "cask".to_string(),
-                only_roles: None,
-                skip_roles: None,
-            });
+            if !homebrew.iter().any(|p| p.name == *name) {
+                homebrew.push(Package {
+                    name: name.clone(),
+                    pkg_type: "cask".to_string(),
+                    only_roles: None,
+                    skip_roles: None,
+                });
+            }
         }
         
         Packages {
@@ -251,7 +255,11 @@ impl Config {
 
         let mut merged_packages = self.packages.normalized();
         let host_packages = host.packages.normalized();
-        merged_packages.homebrew.extend(host_packages.homebrew);
+        for pkg in host_packages.homebrew {
+            if !merged_packages.homebrew.iter().any(|p| p.name == pkg.name) {
+                merged_packages.homebrew.push(pkg);
+            }
+        }
 
         let mut merged_hooks = self.hooks.clone();
         merged_hooks.extend(host.hooks.clone());

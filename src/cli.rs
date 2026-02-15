@@ -83,6 +83,9 @@ pub enum Commands {
         #[arg(help = "Target path to edit (e.g., ~/.zshrc)")]
         target: String,
     },
+
+    #[command(about = "Remove brew packages not listed in config")]
+    Clean,
 }
 
 #[derive(Subcommand)]
@@ -139,6 +142,7 @@ impl Cli {
             Commands::Secrets(secrets_cmd) => self.run_secrets(secrets_cmd),
             Commands::Init { repo, apply } => self.run_init(repo, *apply),
             Commands::Edit { target } => self.run_edit(target),
+            Commands::Clean => self.run_clean(),
         }
     }
 
@@ -773,7 +777,12 @@ impl Cli {
             }
 
             if target.exists() || target.is_symlink() {
-                match std::fs::remove_file(&target) {
+                let remove_result = if target.is_dir() && !target.is_symlink() {
+                    std::fs::remove_dir_all(&target)
+                } else {
+                    std::fs::remove_file(&target)
+                };
+                match remove_result {
                     Ok(()) => {
                         symlinks_removed += 1;
                         println!("  {} Removed symlink: {}", "✓".green(), target.display());
@@ -797,8 +806,14 @@ impl Cli {
                 let backup_path = PathBuf::from(backup_path_str);
 
                 if backup_path.exists() {
-                    match std::fs::copy(&backup_path, &target) {
-                        Ok(_) => {
+                    // Use rename for directory backups, copy for file backups
+                    let restore_result = if backup_path.is_dir() {
+                        std::fs::rename(&backup_path, &target)
+                    } else {
+                        std::fs::copy(&backup_path, &target).map(|_| ())
+                    };
+                    match restore_result {
+                        Ok(()) => {
                             backups_restored += 1;
                             println!(
                                 "  {} Restored backup: {} → {}",
@@ -1304,6 +1319,136 @@ impl Cli {
                 source,
                 editor
             ));
+        }
+
+        Ok(())
+    }
+
+    fn run_clean(&self) -> anyhow::Result<()> {
+        let (config, _host_name) = self.resolve_config_and_host()?;
+
+        let normalized = config.packages.normalized();
+        let config_formulas: std::collections::HashSet<String> = normalized
+            .homebrew
+            .iter()
+            .filter(|p| p.pkg_type == "formula")
+            .map(|p| p.name.clone())
+            .collect();
+        let config_casks: std::collections::HashSet<String> = normalized
+            .homebrew
+            .iter()
+            .filter(|p| p.pkg_type == "cask")
+            .map(|p| p.name.clone())
+            .collect();
+
+        let homebrew = HomebrewManager::new();
+        let installed_formulas = homebrew.list_installed()?;
+        let installed_casks = homebrew.list_installed_casks()?;
+
+        let extra_formulas: Vec<&String> = installed_formulas
+            .iter()
+            .filter(|p| !config_formulas.contains(p.as_str()))
+            .collect();
+        let extra_casks: Vec<&String> = installed_casks
+            .iter()
+            .filter(|p| !config_casks.contains(p.as_str()))
+            .collect();
+
+        if extra_formulas.is_empty() && extra_casks.is_empty() {
+            println!(
+                "{}",
+                "No extra packages to remove. System matches config.".green()
+            );
+            return Ok(());
+        }
+
+        println!("{}", "Packages not in config:".bold());
+        for name in &extra_formulas {
+            println!("  {} {} (formula)", "✗".yellow(), name);
+        }
+        for name in &extra_casks {
+            println!("  {} {} (cask)", "✗".yellow(), name);
+        }
+        println!();
+        println!(
+            "  {} formulas, {} casks to remove",
+            extra_formulas.len(),
+            extra_casks.len()
+        );
+
+        if !self.yes {
+            use dialoguer::Confirm;
+            let confirmed = Confirm::new()
+                .with_prompt("Uninstall these packages?")
+                .default(false)
+                .interact()?;
+
+            if !confirmed {
+                println!("{}", "Cancelled.".bright_black());
+                return Ok(());
+            }
+        }
+
+        println!();
+        let mut removed = 0;
+        let mut errors = Vec::new();
+
+        for name in &extra_formulas {
+            if self.dry_run {
+                println!("  {} Would uninstall {} (formula)", "→".bright_black(), name);
+                removed += 1;
+                continue;
+            }
+            match homebrew.uninstall(name) {
+                Ok(()) => removed += 1,
+                Err(e) => {
+                    eprintln!("  {} Failed to uninstall {}: {}", "✗".red(), name, e);
+                    errors.push(name.to_string());
+                }
+            }
+        }
+
+        for name in &extra_casks {
+            if self.dry_run {
+                println!("  {} Would uninstall {} (cask)", "→".bright_black(), name);
+                removed += 1;
+                continue;
+            }
+            match homebrew.uninstall(name) {
+                Ok(()) => removed += 1,
+                Err(e) => {
+                    eprintln!("  {} Failed to uninstall {}: {}", "✗".red(), name, e);
+                    errors.push(name.to_string());
+                }
+            }
+        }
+
+        println!();
+        if errors.is_empty() {
+            if self.dry_run {
+                println!(
+                    "{}",
+                    format!("Dry run: {} packages would be removed", removed)
+                        .green()
+                        .bold()
+                );
+            } else {
+                println!(
+                    "{}",
+                    format!("✓ Removed {} packages", removed).green().bold()
+                );
+            }
+        } else {
+            println!(
+                "{}",
+                format!(
+                    "⚠ Removed {} packages, {} failed",
+                    removed,
+                    errors.len()
+                )
+                .yellow()
+                .bold()
+            );
         }
 
         Ok(())

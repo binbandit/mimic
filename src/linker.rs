@@ -26,7 +26,7 @@ pub enum ApplyToAllChoice {
     Backup,
 }
 
-/// Create a backup of the target file with timestamp suffix
+/// Create a backup of the target file or directory with timestamp suffix
 fn backup_file(target: &Path) -> anyhow::Result<PathBuf> {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let backup_name = format!(
@@ -39,10 +39,28 @@ fn backup_file(target: &Path) -> anyhow::Result<PathBuf> {
     );
     let backup_path = target.with_file_name(backup_name);
 
-    fs::copy(target, &backup_path)
-        .with_context(|| format!("Failed to create backup at {}", backup_path.display()))?;
+    if target.is_dir() && !target.is_symlink() {
+        // For directories, rename is atomic and works across the same filesystem
+        fs::rename(target, &backup_path)
+            .with_context(|| format!("Failed to create backup at {}", backup_path.display()))?;
+    } else {
+        fs::copy(target, &backup_path)
+            .with_context(|| format!("Failed to create backup at {}", backup_path.display()))?;
+    }
 
     Ok(backup_path)
+}
+
+/// Remove a target path, handling files, symlinks, and directories
+fn remove_target(target: &Path) -> anyhow::Result<()> {
+    if target.is_dir() && !target.is_symlink() {
+        fs::remove_dir_all(target)
+            .with_context(|| format!("Failed to remove directory: {}", target.display()))?;
+    } else {
+        fs::remove_file(target)
+            .with_context(|| format!("Failed to remove file: {}", target.display()))?;
+    }
+    Ok(())
 }
 
 /// Resolve a symlink conflict interactively or with apply-to-all strategy
@@ -150,12 +168,7 @@ pub fn create_symlink_with_resolution(
                 return Ok(());
             }
             ConflictResolution::Overwrite => {
-                fs::remove_file(&expanded_target).with_context(|| {
-                    format!(
-                        "Failed to remove existing file: {}",
-                        expanded_target.display()
-                    )
-                })?;
+                remove_target(&expanded_target)?;
             }
             ConflictResolution::Backup => {
                 // Only back up if the target has readable content (not a dangling symlink)
@@ -163,24 +176,17 @@ pub fn create_symlink_with_resolution(
                     let backup_path = backup_file(&expanded_target)?;
                     backup_path_str = Some(backup_path.to_string_lossy().to_string());
                 }
-                fs::remove_file(&expanded_target).with_context(|| {
-                    format!(
-                        "Failed to remove original file after backup: {}",
-                        expanded_target.display()
-                    )
-                })?;
+                // Directory backups use rename, so the target is already gone
+                if expanded_target.exists() || expanded_target.is_symlink() {
+                    remove_target(&expanded_target)?;
+                }
             }
             ConflictResolution::ApplyToAll(choice) => match choice {
                 ApplyToAllChoice::Skip => {
                     return Ok(());
                 }
                 ApplyToAllChoice::Overwrite => {
-                    fs::remove_file(&expanded_target).with_context(|| {
-                        format!(
-                            "Failed to remove existing file: {}",
-                            expanded_target.display()
-                        )
-                    })?;
+                    remove_target(&expanded_target)?;
                 }
                 ApplyToAllChoice::Backup => {
                     // Only back up if the target has readable content (not a dangling symlink)
@@ -188,12 +194,10 @@ pub fn create_symlink_with_resolution(
                         let backup_path = backup_file(&expanded_target)?;
                         backup_path_str = Some(backup_path.to_string_lossy().to_string());
                     }
-                    fs::remove_file(&expanded_target).with_context(|| {
-                        format!(
-                            "Failed to remove original file after backup: {}",
-                            expanded_target.display()
-                        )
-                    })?;
+                    // Directory backups use rename, so the target is already gone
+                    if expanded_target.exists() || expanded_target.is_symlink() {
+                        remove_target(&expanded_target)?;
+                    }
                 }
             },
         }
@@ -292,9 +296,7 @@ fn apply_template_dotfile(
                 return Ok(());
             }
             ConflictResolution::Overwrite => {
-                fs::remove_file(&target).with_context(|| {
-                    format!("Failed to remove existing file: {}", target.display())
-                })?;
+                remove_target(&target)?;
             }
             ConflictResolution::Backup => {
                 // Only back up if the target has readable content (not a dangling symlink)
@@ -302,21 +304,17 @@ fn apply_template_dotfile(
                     let backup_path = backup_file(&target)?;
                     backup_path_str = Some(backup_path.to_string_lossy().to_string());
                 }
-                fs::remove_file(&target).with_context(|| {
-                    format!(
-                        "Failed to remove original file after backup: {}",
-                        target.display()
-                    )
-                })?;
+                // Directory backups use rename, so the target is already gone
+                if target.exists() || target.is_symlink() {
+                    remove_target(&target)?;
+                }
             }
             ConflictResolution::ApplyToAll(choice) => match choice {
                 ApplyToAllChoice::Skip => {
                     return Ok(());
                 }
                 ApplyToAllChoice::Overwrite => {
-                    fs::remove_file(&target).with_context(|| {
-                        format!("Failed to remove existing file: {}", target.display())
-                    })?;
+                    remove_target(&target)?;
                 }
                 ApplyToAllChoice::Backup => {
                     // Only back up if the target has readable content (not a dangling symlink)
@@ -324,12 +322,10 @@ fn apply_template_dotfile(
                         let backup_path = backup_file(&target)?;
                         backup_path_str = Some(backup_path.to_string_lossy().to_string());
                     }
-                    fs::remove_file(&target).with_context(|| {
-                        format!(
-                            "Failed to remove original file after backup: {}",
-                            target.display()
-                        )
-                    })?;
+                    // Directory backups use rename, so the target is already gone
+                    if target.exists() || target.is_symlink() {
+                        remove_target(&target)?;
+                    }
                 }
             },
         }
