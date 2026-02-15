@@ -19,6 +19,8 @@ fn test_diff_detects_new_dotfile() {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
         template: false,
+        only_roles: None,
+        skip_roles: None,
     };
 
     let config = Config {
@@ -57,6 +59,8 @@ fn test_diff_symlink_already_correct() {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
         template: false,
+        only_roles: None,
+        skip_roles: None,
     };
 
     let config = Config {
@@ -96,6 +100,8 @@ fn test_diff_wrong_symlink_target() {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
         template: false,
+        only_roles: None,
+        skip_roles: None,
     };
 
     let config = Config {
@@ -133,6 +139,8 @@ fn test_diff_target_is_regular_file() {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
         template: false,
+        only_roles: None,
+        skip_roles: None,
     };
 
     let config = Config {
@@ -161,6 +169,8 @@ fn test_diff_package_not_installed() {
     let package = Package {
         name: "mimic_test_package_never_installed".to_string(),
         pkg_type: "formula".to_string(),
+        only_roles: None,
+        skip_roles: None,
     };
 
     let config = Config {
@@ -207,11 +217,15 @@ fn test_diff_multiple_changes() {
                 source: source1.to_str().unwrap().to_string(),
                 target: target1.to_str().unwrap().to_string(),
                 template: false,
+                only_roles: None,
+                skip_roles: None,
             },
             Dotfile {
                 source: source2.to_str().unwrap().to_string(),
                 target: target2.to_str().unwrap().to_string(),
                 template: false,
+                only_roles: None,
+                skip_roles: None,
             },
         ],
         packages: Packages::default(),
@@ -250,6 +264,8 @@ fn test_diff_pretty_format() {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
         template: false,
+        only_roles: None,
+        skip_roles: None,
     };
 
     let config = Config {

@@ -13,23 +13,52 @@ pub enum Hook {
         targets: Vec<String>,
         #[serde(default)]
         default: Option<String>,
+        #[serde(default)]
+        only_roles: Option<Vec<String>>,
+        #[serde(default)]
+        skip_roles: Option<Vec<String>>,
     },
     #[serde(rename = "cargo-install")]
-    CargoInstall { packages: Vec<CargoPackage> },
+    CargoInstall {
+        packages: Vec<CargoPackage>,
+        #[serde(default)]
+        only_roles: Option<Vec<String>>,
+        #[serde(default)]
+        skip_roles: Option<Vec<String>>,
+    },
     #[serde(rename = "mise")]
-    Mise,
+    Mise {
+        #[serde(default)]
+        only_roles: Option<Vec<String>>,
+        #[serde(default)]
+        skip_roles: Option<Vec<String>>,
+    },
     #[serde(rename = "pnpm-global")]
-    PnpmGlobal { packages: Vec<String> },
+    PnpmGlobal {
+        packages: Vec<String>,
+        #[serde(default)]
+        only_roles: Option<Vec<String>>,
+        #[serde(default)]
+        skip_roles: Option<Vec<String>>,
+    },
     #[serde(rename = "uv-python")]
     UvPython {
         version: String,
         symlinks: HashMap<String, String>,
+        #[serde(default)]
+        only_roles: Option<Vec<String>>,
+        #[serde(default)]
+        skip_roles: Option<Vec<String>>,
     },
     #[serde(rename = "command")]
     Command {
         name: String,
         command: String,
         on_failure: FailureMode,
+        #[serde(default)]
+        only_roles: Option<Vec<String>>,
+        #[serde(default)]
+        skip_roles: Option<Vec<String>>,
     },
 }
 
@@ -55,26 +84,55 @@ impl Default for FailureMode {
 }
 
 impl Hook {
-    /// Get a human-readable name for this hook
     pub fn name(&self) -> String {
         match self {
             Hook::Rustup { .. } => "rustup".to_string(),
             Hook::CargoInstall { .. } => "cargo-install".to_string(),
-            Hook::Mise => "mise".to_string(),
+            Hook::Mise { .. } => "mise".to_string(),
             Hook::PnpmGlobal { .. } => "pnpm-global".to_string(),
             Hook::UvPython { .. } => "uv-python".to_string(),
             Hook::Command { name, .. } => name.clone(),
         }
     }
+
+    pub fn only_roles(&self) -> &Option<Vec<String>> {
+        match self {
+            Hook::Rustup { only_roles, .. } => only_roles,
+            Hook::CargoInstall { only_roles, .. } => only_roles,
+            Hook::Mise { only_roles, .. } => only_roles,
+            Hook::PnpmGlobal { only_roles, .. } => only_roles,
+            Hook::UvPython { only_roles, .. } => only_roles,
+            Hook::Command { only_roles, .. } => only_roles,
+        }
+    }
+
+    pub fn skip_roles(&self) -> &Option<Vec<String>> {
+        match self {
+            Hook::Rustup { skip_roles, .. } => skip_roles,
+            Hook::CargoInstall { skip_roles, .. } => skip_roles,
+            Hook::Mise { skip_roles, .. } => skip_roles,
+            Hook::PnpmGlobal { skip_roles, .. } => skip_roles,
+            Hook::UvPython { skip_roles, .. } => skip_roles,
+            Hook::Command { skip_roles, .. } => skip_roles,
+        }
+    }
 }
 
-/// Execute all hooks in sequence
-pub fn execute_hooks(hooks: &[Hook], verbose: bool) -> anyhow::Result<()> {
+/// Execute all hooks in sequence, filtering by roles
+pub fn execute_hooks(hooks: &[Hook], host_roles: &[String], verbose: bool) -> anyhow::Result<()> {
     if hooks.is_empty() {
         return Ok(());
     }
 
     for hook in hooks {
+        if !crate::config::should_apply_for_roles(hook.only_roles(), hook.skip_roles(), host_roles)
+        {
+            if verbose {
+                println!("  {} {} (role mismatch)", "↷".bright_black(), hook.name());
+            }
+            continue;
+        }
+
         execute_hook(hook, verbose)?;
     }
 
@@ -92,11 +150,14 @@ fn execute_hook(hook: &Hook, verbose: bool) -> anyhow::Result<()> {
             components,
             targets,
             default,
+            ..
         } => execute_rustup_hook(toolchains, components, targets, default.as_deref(), verbose),
-        Hook::CargoInstall { packages } => execute_cargo_install_hook(packages, verbose),
-        Hook::Mise => execute_mise_hook(verbose),
-        Hook::PnpmGlobal { packages } => execute_pnpm_global_hook(packages, verbose),
-        Hook::UvPython { version, symlinks } => execute_uv_python_hook(version, symlinks, verbose),
+        Hook::CargoInstall { packages, .. } => execute_cargo_install_hook(packages, verbose),
+        Hook::Mise { .. } => execute_mise_hook(verbose),
+        Hook::PnpmGlobal { packages, .. } => execute_pnpm_global_hook(packages, verbose),
+        Hook::UvPython {
+            version, symlinks, ..
+        } => execute_uv_python_hook(version, symlinks, verbose),
         Hook::Command {
             command,
             on_failure,
@@ -504,6 +565,8 @@ mod tests {
             components: vec![],
             targets: vec![],
             default: None,
+            only_roles: None,
+            skip_roles: None,
         };
         assert_eq!(hook.name(), "rustup");
 
@@ -511,6 +574,8 @@ mod tests {
             name: "test".to_string(),
             command: "echo test".to_string(),
             on_failure: FailureMode::Continue,
+            only_roles: None,
+            skip_roles: None,
         };
         assert_eq!(hook.name(), "test");
     }

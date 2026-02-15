@@ -90,6 +90,8 @@ fn test_template_detection_tmpl_suffix() {
         source: "config.fish.tmpl".to_string(),
         target: "~/.config/fish/config.fish".to_string(),
         template: false,
+        only_roles: None,
+        skip_roles: None,
     };
     assert!(dotfile.is_template());
 }
@@ -100,6 +102,8 @@ fn test_template_detection_hbs_suffix() {
         source: "config.fish.hbs".to_string(),
         target: "~/.config/fish/config.fish".to_string(),
         template: false,
+        only_roles: None,
+        skip_roles: None,
     };
     assert!(dotfile.is_template());
 }
@@ -110,6 +114,8 @@ fn test_template_detection_explicit_flag() {
         source: "config.fish".to_string(),
         target: "~/.config/fish/config.fish".to_string(),
         template: true,
+        only_roles: None,
+        skip_roles: None,
     };
     assert!(dotfile.is_template());
 }
@@ -120,6 +126,8 @@ fn test_template_detection_regular_file() {
         source: "config.fish".to_string(),
         target: "~/.config/fish/config.fish".to_string(),
         template: false,
+        only_roles: None,
+        skip_roles: None,
     };
     assert!(!dotfile.is_template());
 }

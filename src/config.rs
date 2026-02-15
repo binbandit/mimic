@@ -49,6 +49,10 @@ pub struct Dotfile {
     pub target: String,
     #[serde(default)]
     pub template: bool,
+    #[serde(default)]
+    pub only_roles: Option<Vec<String>>,
+    #[serde(default)]
+    pub skip_roles: Option<Vec<String>>,
 }
 
 impl Dotfile {
@@ -70,6 +74,51 @@ pub struct Package {
 
     #[serde(rename = "type")]
     pub pkg_type: String,
+
+    #[serde(default)]
+    pub only_roles: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub skip_roles: Option<Vec<String>>,
+}
+
+/// Check if a resource should be applied based on role filtering
+///
+/// # Arguments
+/// * `only_roles` - If set, resource applies ONLY if host has at least one matching role
+/// * `skip_roles` - If set, resource is skipped if host has any matching role
+/// * `host_roles` - The roles assigned to the current host
+///
+/// # Returns
+/// * `true` if the resource should be applied
+/// * `false` if the resource should be skipped
+///
+/// # Logic
+/// 1. If `skip_roles` matches any host role, return false (skip)
+/// 2. If `only_roles` is set and non-empty, return true only if at least one role matches
+/// 3. If `only_roles` is empty or None, return true (no restrictions)
+pub fn should_apply_for_roles(
+    only_roles: &Option<Vec<String>>,
+    skip_roles: &Option<Vec<String>>,
+    host_roles: &[String],
+) -> bool {
+    // If skip_roles matches, don't apply
+    if let Some(skip) = skip_roles {
+        if skip.iter().any(|role| host_roles.contains(role)) {
+            return false;
+        }
+    }
+
+    // If only_roles is set, must match at least one
+    if let Some(only) = only_roles {
+        if only.is_empty() {
+            return true; // Empty only_roles means apply to all
+        }
+        return only.iter().any(|role| host_roles.contains(role));
+    }
+
+    // No restrictions = apply
+    true
 }
 
 impl Config {

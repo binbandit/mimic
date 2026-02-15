@@ -22,6 +22,12 @@ source = "templates/fish-config.fish.tmpl"
 target = "~/.config/fish/config.fish"
 template = true
 
+# Server-specific dotfile - only on server/headless machines
+[[dotfiles]]
+source = "dotfiles/server-bashrc"
+target = "~/.bashrc"
+only_roles = ["server", "headless"]
+
 # Shared packages (installed on all hosts)
 [[packages.homebrew]]
 name = "git"
@@ -30,6 +36,34 @@ type = "formula"
 [[packages.homebrew]]
 name = "curl"
 type = "formula"
+
+# Personal tools - skip on work machines
+[[packages.homebrew]]
+name = "spotify"
+type = "cask"
+skip_roles = ["work"]
+
+[[packages.homebrew]]
+name = "discord"
+type = "cask"
+skip_roles = ["work", "server"]
+
+# Work tools - only on work machines
+[[packages.homebrew]]
+name = "slack"
+type = "cask"
+only_roles = ["work"]
+
+[[packages.homebrew]]
+name = "zoom"
+type = "cask"
+only_roles = ["work"]
+
+# Development tools - only on powerful machines
+[[packages.homebrew]]
+name = "docker"
+type = "cask"
+only_roles = ["desktop", "powerful"]
 
 # Activation hooks (run after dotfiles and packages applied)
 [[hooks]]
@@ -41,6 +75,13 @@ default = "nightly"
 
 [[hooks]]
 type = "mise"
+
+# Development setup - only on powerful machines
+[[hooks]]
+type = "uv-python"
+version = "3.12"
+only_roles = ["desktop", "powerful"]
+symlinks = { python3 = "~/.local/bin/python3" }
 
 [[hooks]]
 type = "command"
@@ -68,14 +109,6 @@ target = "~/.ssh/config"
 [[hosts.personal-macbook.packages.homebrew]]
 name = "neovim"
 type = "formula"
-
-[[hosts.personal-macbook.packages.homebrew]]
-name = "spotify"
-type = "cask"
-
-[[hosts.personal-macbook.packages.homebrew]]
-name = "discord"
-type = "cask"
 
 [[hosts.personal-macbook.hooks]]
 type = "pnpm-global"
@@ -108,14 +141,6 @@ target = "~/.ssh/config"
 [[hosts.work-macbook.packages.homebrew]]
 name = "neovim"
 type = "formula"
-
-[[hosts.work-macbook.packages.homebrew]]
-name = "slack"
-type = "cask"
-
-[[hosts.work-macbook.packages.homebrew]]
-name = "zoom"
-type = "cask"
 
 [[hosts.work-macbook.packages.homebrew]]
 name = "corporate-vpn"

@@ -52,13 +52,47 @@ Each host can:
 
 ## Roles
 
-Hosts can have roles for documentation/organization:
+Hosts can have roles for organization and filtering:
 - `personal-macbook`: `["personal", "mac", "portable"]`
 - `work-macbook`: `["work", "mac", "portable"]`
 - `home-desktop`: `["personal", "linux", "desktop", "powerful"]`
 - `home-server`: `["server", "linux", "headless"]`
 
-Roles are currently informational but could be used for future features like role-based filtering.
+### Role-Based Filtering
+
+You can conditionally apply dotfiles, packages, and hooks based on host roles using `only_roles` and `skip_roles`:
+
+**only_roles**: Apply ONLY if the host has at least one matching role
+```toml
+[[packages.homebrew]]
+name = "slack"
+type = "cask"
+only_roles = ["work"]  # Only installed on work machines
+```
+
+**skip_roles**: Skip if the host has any matching role
+```toml
+[[packages.homebrew]]
+name = "spotify"
+type = "cask"
+skip_roles = ["work"]  # Installed everywhere except work machines
+```
+
+**Combined**: Both can be used together
+```toml
+[[dotfiles]]
+source = "dotfiles/server-bashrc"
+target = "~/.bashrc"
+only_roles = ["server", "headless"]  # Must match one of these
+skip_roles = ["desktop"]            # But not this
+```
+
+**Filtering logic**:
+1. If `skip_roles` matches any host role → skip
+2. If `only_roles` is set → apply only if at least one role matches
+3. If neither is set → always apply
+
+This allows you to define resources once in the base config and control which hosts receive them, reducing duplication across host-specific sections.
 
 ## Real-World Scenarios
 

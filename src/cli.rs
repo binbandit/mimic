@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use std::path::PathBuf;
 
-use crate::config::Config;
+use crate::config::{should_apply_for_roles, Config};
 use crate::diff::{Change, DiffEngine};
 use crate::hooks;
 use crate::installer::HomebrewManager;
@@ -327,6 +327,17 @@ impl Cli {
         };
 
         for dotfile in &config.dotfiles {
+            if !should_apply_for_roles(&dotfile.only_roles, &dotfile.skip_roles, &host_ctx.roles) {
+                if self.verbose {
+                    println!(
+                        "  {} {} (role mismatch)",
+                        "↷".bright_black(),
+                        dotfile.target
+                    );
+                }
+                continue;
+            }
+
             if self.verbose {
                 println!(
                     "  {} {} → {}",
@@ -359,6 +370,13 @@ impl Cli {
 
         let homebrew = HomebrewManager::new();
         for package in &config.packages.homebrew {
+            if !should_apply_for_roles(&package.only_roles, &package.skip_roles, &host_ctx.roles) {
+                if self.verbose {
+                    println!("  {} {} (role mismatch)", "↷".bright_black(), package.name);
+                }
+                continue;
+            }
+
             if self.verbose {
                 println!("  {} {}", "Installing:".bright_black(), package.name);
             }
@@ -388,7 +406,7 @@ impl Cli {
             println!();
             println!("{}", "Running activation hooks...".bright_cyan().bold());
 
-            match hooks::execute_hooks(&config.hooks, self.verbose) {
+            match hooks::execute_hooks(&config.hooks, &host_ctx.roles, self.verbose) {
                 Ok(()) => {
                     println!();
                     println!("{}", "✓ All hooks completed successfully".green());
