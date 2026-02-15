@@ -72,15 +72,11 @@ pub struct CargoPackage {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum FailureMode {
+    #[default]
     Continue,
     Fail,
-}
-
-impl Default for FailureMode {
-    fn default() -> Self {
-        FailureMode::Continue
-    }
 }
 
 impl Hook {
@@ -582,9 +578,7 @@ mod tests {
 
     #[test]
     fn test_command_exists() {
-        // sh should exist on all Unix systems
         assert!(command_exists("sh"));
-        // This should not exist
         assert!(!command_exists(
             "this_command_definitely_does_not_exist_12345"
         ));

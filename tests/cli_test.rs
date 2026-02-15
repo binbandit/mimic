@@ -34,7 +34,7 @@ fn test_cli_diff_missing_config() {
 
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("IO error"));
+        .stderr(predicate::str::contains("Failed to read config file"));
 }
 
 #[test]
@@ -214,7 +214,7 @@ fn test_cli_apply_missing_config() {
 
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("IO error"));
+        .stderr(predicate::str::contains("Failed to read config file"));
 }
 
 #[test]

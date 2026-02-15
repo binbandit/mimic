@@ -733,3 +733,206 @@ target = "{}"
 
     assert!(target_in_temp.is_symlink());
 }
+
+
+/// Test error reporting for nonexistent source file
+#[test]
+fn test_error_reporting_nonexistent_source() {
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    let config_path = temp_path.join("mimic.toml");
+    let state_path = temp_path.join("state.toml");
+    let target = temp_path.join("target.conf");
+
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[[dotfiles]]
+source = "/nonexistent/source.conf"
+target = "{}"
+"#,
+            target.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin("mimic")
+        .unwrap()
+        .arg("apply")
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--state")
+        .arg(&state_path)
+        .arg("--yes")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not exist") || stderr.contains("No such file"),
+        "Should show error for nonexistent source: {}",
+        stderr
+    );
+}
+
+/// Test error summary with all successful operations
+#[test]
+fn test_error_summary_all_success() {
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    let source_dir = temp_path.join("dotfiles");
+    fs::create_dir(&source_dir).unwrap();
+    fs::write(source_dir.join("file1.conf"), "content 1").unwrap();
+    fs::write(source_dir.join("file2.conf"), "content 2").unwrap();
+
+    let config_path = temp_path.join("mimic.toml");
+    let state_path = temp_path.join("state.toml");
+    let target1 = temp_path.join("target1.conf");
+    let target2 = temp_path.join("target2.conf");
+
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[[dotfiles]]
+source = "{}/file1.conf"
+target = "{}"
+
+[[dotfiles]]
+source = "{}/file2.conf"
+target = "{}"
+"#,
+            source_dir.display(),
+            target1.display(),
+            source_dir.display(),
+            target2.display()
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("mimic")
+        .unwrap()
+        .arg("apply")
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--state")
+        .arg(&state_path)
+        .arg("--yes")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("✓"));
+
+    assert!(target1.is_symlink());
+    assert!(target2.is_symlink());
+}
+
+/// Test that state file is created for successful operations
+#[test]
+fn test_state_saved_for_successful_operations() {
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    let source_dir = temp_path.join("dotfiles");
+    fs::create_dir(&source_dir).unwrap();
+    fs::write(source_dir.join("valid.conf"), "valid").unwrap();
+
+    let config_path = temp_path.join("mimic.toml");
+    let state_path = temp_path.join("state.toml");
+    let target = temp_path.join("target.conf");
+
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[[dotfiles]]
+source = "{}/valid.conf"
+target = "{}"
+"#,
+            source_dir.display(),
+            target.display()
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("mimic")
+        .unwrap()
+        .arg("apply")
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--state")
+        .arg(&state_path)
+        .arg("--yes")
+        .assert()
+        .success();
+
+    assert!(
+        state_path.exists(),
+        "State file should be created"
+    );
+
+    let state_content = fs::read_to_string(&state_path).unwrap();
+    assert!(
+        state_content.contains("target.conf"),
+        "State should include successful operations"
+    );
+}
+
+/// Test error handling with conflicting files and --yes flag
+#[test]
+fn test_conflict_resolution_with_yes_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    let source_dir = temp_path.join("dotfiles");
+    fs::create_dir(&source_dir).unwrap();
+    fs::write(source_dir.join("test.conf"), "new content").unwrap();
+
+    let target = temp_path.join("target.conf");
+    fs::write(&target, "existing content").unwrap();
+
+    let config_path = temp_path.join("mimic.toml");
+    let state_path = temp_path.join("state.toml");
+
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[[dotfiles]]
+source = "{}/test.conf"
+target = "{}"
+"#,
+            source_dir.display(),
+            target.display()
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("mimic")
+        .unwrap()
+        .arg("apply")
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--state")
+        .arg(&state_path)
+        .arg("--yes")
+        .assert()
+        .success();
+
+    assert!(target.is_symlink(), "Conflict should be resolved via backup");
+
+    let backup_pattern = format!("{}.backup.*", target.display());
+    let backup_files: Vec<_> = glob::glob(&backup_pattern)
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+
+    assert!(
+        !backup_files.is_empty(),
+        "Backup should be created for conflicting file"
+    );
+}

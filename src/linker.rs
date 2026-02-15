@@ -60,7 +60,6 @@ fn resolve_conflict(
         });
     }
 
-    // Check if target is a symlink pointing to a different source
     let is_symlink_to_different = if target.is_symlink() {
         let current_source = fs::read_link(target)?;
         current_source != source
@@ -98,7 +97,6 @@ fn resolve_conflict(
         1 => Ok(ConflictResolution::Overwrite),
         2 => Ok(ConflictResolution::Backup),
         3 => {
-            // Ask which action to apply to all
             let apply_choices = vec!["[s]kip all", "[o]verwrite all", "[b]ackup all"];
 
             let apply_selection = Select::new()

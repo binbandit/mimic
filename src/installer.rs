@@ -1,4 +1,5 @@
 use crate::error::InstallError;
+use crate::spinner::Spinner;
 use crate::state::{PackageState, State};
 use std::process::Command;
 
@@ -60,10 +61,13 @@ impl HomebrewManager {
             return Ok(());
         }
 
+        let spinner = Spinner::new(format!("Installing {}...", name));
+
         let output = Command::new("brew").arg("install").arg(name).output();
 
         match output {
             Ok(output) if output.status.success() => {
+                spinner.finish_with_message(format!("✓ Installed {}", name));
                 state.add_package(PackageState {
                     name: name.to_string(),
                     manager: "brew".to_string(),
@@ -73,6 +77,7 @@ impl HomebrewManager {
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let exit_code = output.status.code().unwrap_or(-1);
+                spinner.finish_with_error(format!("Failed to install {}", name));
                 Err(InstallError::CommandFailed {
                     command: format!("brew install {}", name),
                     exit_code,
@@ -80,10 +85,16 @@ impl HomebrewManager {
                 }
                 .into())
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(anyhow::anyhow!(
-                "Homebrew not found. Please install Homebrew from https://brew.sh"
-            )),
-            Err(e) => Err(anyhow::anyhow!("Failed to execute brew: {}", e)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                spinner.finish_with_error("Homebrew not found");
+                Err(anyhow::anyhow!(
+                    "Homebrew not found. Please install Homebrew from https://brew.sh"
+                ))
+            }
+            Err(e) => {
+                spinner.finish_with_error(format!("Failed to execute brew: {}", e));
+                Err(anyhow::anyhow!("Failed to execute brew: {}", e))
+            }
         }
     }
 }

@@ -7,5 +7,7 @@ pub mod installer;
 pub mod linker;
 pub mod mise;
 pub mod secrets;
+pub mod secrets_scan;
+pub mod spinner;
 pub mod state;
 pub mod template;

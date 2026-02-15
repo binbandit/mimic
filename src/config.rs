@@ -126,22 +126,18 @@ pub fn should_apply_for_roles(
     skip_roles: &Option<Vec<String>>,
     host_roles: &[String],
 ) -> bool {
-    // If skip_roles matches, don't apply
-    if let Some(skip) = skip_roles {
-        if skip.iter().any(|role| host_roles.contains(role)) {
+    if let Some(skip) = skip_roles
+        && skip.iter().any(|role| host_roles.contains(role)) {
             return false;
         }
-    }
 
-    // If only_roles is set, must match at least one
     if let Some(only) = only_roles {
         if only.is_empty() {
-            return true; // Empty only_roles means apply to all
+            return true;
         }
         return only.iter().any(|role| host_roles.contains(role));
     }
 
-    // No restrictions = apply
     true
 }
 
@@ -153,8 +149,14 @@ impl Config {
     }
 
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
-        let content =
-            fs::read_to_string(path.as_ref()).map_err(|e| anyhow::anyhow!("IO error: {}", e))?;
+        use anyhow::Context;
+        let path_ref = path.as_ref();
+        let content = fs::read_to_string(path_ref).with_context(|| {
+            format!(
+                "Failed to read config file: {}\n\nTo fix:\n  - Check that the file exists\n  - Verify you have read permissions\n  - Ensure the path is correct",
+                path_ref.display()
+            )
+        })?;
         Self::from_str(&content)
     }
 
@@ -165,7 +167,6 @@ impl Config {
             .get(host_name)
             .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", host_name))?;
 
-        // Deep merge: base + host overrides
         let mut merged_vars = self.variables.clone();
         for (key, value) in &host.variables {
             merged_vars.insert(key.clone(), value.clone());

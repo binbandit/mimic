@@ -55,6 +55,86 @@ mimic follows a declarative configuration model: users specify their desired sta
 
 ## Module Descriptions
 
+### Spinner (`src/spinner.rs`)
+
+**Purpose:** Visual feedback for long-running operations with automatic CI detection.
+
+**Responsibilities:**
+- Display ASCII spinners during operations
+- Show operation timing on completion
+- Detect CI environments and disable spinners automatically
+- Support concurrent operations via MultiProgress
+- Provide consistent visual feedback across all commands
+
+**Key types:**
+```rust
+pub struct Spinner {
+    pb: Option<ProgressBar>,
+    start_time: Instant,
+}
+
+pub struct SpinnerManager {
+    multi: MultiProgress,
+}
+```
+
+**Key functions:**
+```rust
+impl Spinner {
+    pub fn new(message: String) -> Self
+    pub fn set_message(&self, message: String)
+    pub fn finish_with_message(&self, message: String)
+    pub fn finish_with_error(&self, message: String)
+    pub fn finish_and_clear(&self)
+}
+
+impl SpinnerManager {
+    pub fn new() -> Self
+    pub fn add_spinner(&self, message: String) -> Spinner
+}
+```
+
+**Design decisions:**
+- CI detection via `std::env::var("CI")` (standard CI environment variable)
+- Optional `ProgressBar` pattern: `pb: Option<ProgressBar>` allows no-op in CI
+- Timing tracked from construction via `start_time: Instant`
+- Template: `{spinner:.green} {msg}` with 100ms tick interval
+- MultiProgress enables concurrent operations without visual conflicts
+- Auto-timing display: "took X.XXs" appended to completion messages
+
+### Secrets Scanner (`src/secrets_scan.rs`)
+
+**Purpose:** Detect secrets (API keys, tokens, credentials) in files before git operations.
+
+**Responsibilities:**
+- Scan files for common secret patterns (GitHub PAT, AWS keys, JWT tokens, etc.)
+- Use ripsecrets library for pattern matching
+- Support `.secretsignore` file format
+- Return structured results with file paths, line numbers, and matched patterns
+- Local-only processing (no data sent off machine)
+
+**Key types:**
+```rust
+pub struct SecretMatch {
+    pub file_path: PathBuf,
+    pub line_number: usize,
+    pub pattern: String,
+    pub matched_text: String,
+}
+```
+
+**Key functions:**
+```rust
+pub fn scan_for_secrets(paths: &[PathBuf]) -> Result<Vec<SecretMatch>>
+```
+
+**Design decisions:**
+- Uses `ripsecrets` crate (built-in patterns for common secret formats)
+- Strict ignore mode via `.secretsignore` file
+- Returns structured results for UI display (not raw text)
+- Separate from `secrets.rs` (keychain storage) for clear separation of concerns
+- All scanning is local (privacy-focused design)
+
 ### Config (`src/config.rs`)
 
 **Purpose:** Parse and validate TOML configuration files.
@@ -289,13 +369,35 @@ pub enum Change {
 
 ### Error Handling (`src/error.rs`)
 
-**Purpose:** Strongly-typed error handling.
+**Purpose:** Strongly-typed error handling with user-friendly output.
 
 **Design:**
 - Uses `thiserror` for custom error types
 - Uses `anyhow` for CLI-level error context
 - Module-specific error types (LinkError, InstallError, etc.)
 - Errors propagate up to CLI layer for user-friendly messages
+
+**Error Display Function:**
+```rust
+pub fn display_error(error: &anyhow::Error) {
+    eprintln!("{} {}", "Error:".red().bold(), error);
+    let mut current = error.source();
+    if current.is_some() {
+        eprintln!();
+        eprintln!("{}", "Caused by:".bright_black());
+    }
+    while let Some(source) = current {
+        eprintln!("  {} {}", "→".bright_black(), source);
+        current = source.source();
+    }
+}
+```
+
+**Error Message Pattern:**
+- Main error: What went wrong
+- "Caused by:" chain: Technical details showing full error source chain
+- "To fix:" sections: Actionable steps for common issues
+- BrokenPipe handling: Silent exit(0) when piping to `head` or closed pager
 
 ## Data Flow: Apply Command
 

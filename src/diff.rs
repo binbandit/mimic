@@ -163,7 +163,7 @@ impl DiffEngine {
         } else {
             Ok(Change::Add {
                 resource_type: ResourceType::Package,
-                description: format!("{}", name),
+                description: name.to_string(),
             })
         }
     }

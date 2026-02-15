@@ -107,7 +107,6 @@ pub fn list_secrets() -> Result<Vec<String>> {
         .args(["find-generic-password", "-s", SERVICE_NAME, "-a"])
         .output();
 
-    // If this fails, try alternative approach using dump-keychain
     if output.is_err() || !output.as_ref().unwrap().status.success() {
         return list_secrets_via_dump();
     }
@@ -124,25 +123,20 @@ fn list_secrets_via_dump() -> Result<Vec<String>> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Parse keychain dump output to find entries for our service
     let mut secrets = Vec::new();
     let mut in_mimic_entry = false;
     let mut current_account = None;
 
     for line in stdout.lines() {
-        // Look for service attribute matching "mimic"
         if line.contains("\"svce\"<blob>") && line.contains(SERVICE_NAME) {
             in_mimic_entry = true;
         }
 
-        // If we're in a mimic entry, extract the account name
-        if in_mimic_entry && line.contains("\"acct\"<blob>=") {
-            if let Some(account) = extract_account_name(line) {
+        if in_mimic_entry && line.contains("\"acct\"<blob>=")
+            && let Some(account) = extract_account_name(line) {
                 current_account = Some(account);
             }
-        }
 
-        // End of entry - check if we should add it
         if line.trim() == "}" {
             if let Some(account) = current_account.take() {
                 secrets.push(account);
@@ -154,7 +148,6 @@ fn list_secrets_via_dump() -> Result<Vec<String>> {
     Ok(secrets)
 }
 
-/// Extract account name from keychain dump line.
 fn extract_account_name(line: &str) -> Option<String> {
     // Format: "acct"<blob>="account_name"
     if let Some(start) = line.find("\"acct\"<blob>=") {
@@ -226,7 +219,6 @@ pub fn secret_exists(key: &str) -> Result<bool> {
 pub fn get_all_secrets() -> HashMap<String, String> {
     let mut secrets = HashMap::new();
 
-    // Skip if not on macOS
     if check_platform().is_err() {
         return secrets;
     }
@@ -242,10 +234,6 @@ pub fn get_all_secrets() -> HashMap<String, String> {
     secrets
 }
 
-/// Check if running on macOS.
-///
-/// # Errors
-/// Returns an error with a helpful message if not on macOS.
 fn check_platform() -> Result<()> {
     if cfg!(not(target_os = "macos")) {
         return Err(anyhow::anyhow!(

@@ -9,6 +9,7 @@ use crate::installer::HomebrewManager;
 use crate::linker::{apply_dotfile, ApplyToAllChoice};
 use crate::state::State;
 use crate::template::HostContext;
+use anyhow::Context;
 
 #[derive(Parser)]
 #[command(name = "mimic")]
@@ -67,6 +68,21 @@ pub enum Commands {
 
     #[command(about = "Manage secrets in macOS Keychain", subcommand)]
     Secrets(SecretsCommands),
+
+    #[command(about = "Initialize from a git repository")]
+    Init {
+        #[arg(help = "Repository URL to clone")]
+        repo: String,
+
+        #[arg(long, help = "Automatically apply configuration after cloning")]
+        apply: bool,
+    },
+
+    #[command(about = "Open the source file for a target in your editor")]
+    Edit {
+        #[arg(help = "Target path to edit (e.g., ~/.zshrc)")]
+        target: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -121,6 +137,8 @@ impl Cli {
             Commands::Hosts(hosts_cmd) => self.run_hosts(hosts_cmd),
             Commands::Render { template } => self.run_render(template),
             Commands::Secrets(secrets_cmd) => self.run_secrets(secrets_cmd),
+            Commands::Init { repo, apply } => self.run_init(repo, *apply),
+            Commands::Edit { target } => self.run_edit(target),
         }
     }
 
@@ -134,13 +152,10 @@ impl Cli {
             return Ok(cwd_config);
         }
 
-        if let Some(config_dir) = directories::BaseDirs::new()
-            .and_then(|dirs| Some(dirs.config_dir().join("mimic/config.toml")))
-        {
-            if config_dir.exists() {
+        if let Some(config_dir) = directories::BaseDirs::new().map(|dirs| dirs.config_dir().join("mimic/config.toml"))
+            && config_dir.exists() {
                 return Ok(config_dir);
             }
-        }
 
         Err(anyhow::anyhow!(
             "Config file not found. Searched:\n  - ./mimic.toml\n  - ~/.config/mimic/config.toml\n\nUse --config to specify a custom path."
@@ -993,6 +1008,312 @@ impl Cli {
             }
         }
     }
+
+    fn run_init(&self, repo: &str, apply_after: bool) -> anyhow::Result<()> {
+        use crate::secrets_scan::scan_for_secrets;
+        use dialoguer::Confirm;
+        use std::fs;
+        use std::process::Command;
+
+        let repo_dir = directories::BaseDirs::new()
+            .ok_or_else(|| anyhow::anyhow!("Failed to determine home directory"))?
+            .config_dir()
+            .join("mimic/repo");
+
+        if repo_dir.exists() {
+            return Err(anyhow::anyhow!(
+                "Repository directory already exists: {}\n\nTo fix:\n  - Remove the existing directory: rm -rf {}\n  - Or use a different location",
+                repo_dir.display(),
+                repo_dir.display()
+            ));
+        }
+
+        let parent_dir = repo_dir
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Invalid repository directory"))?;
+        fs::create_dir_all(parent_dir).with_context(|| {
+            format!(
+                "Failed to create mimic config directory: {}",
+                parent_dir.display()
+            )
+        })?;
+
+        println!("{}", "Cloning repository...".bold());
+
+        let output = Command::new("git")
+            .arg("clone")
+            .arg("--depth")
+            .arg("1")
+            .arg(repo)
+            .arg(&repo_dir)
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                println!(
+                    "  {} Repository cloned to {}",
+                    "✓".green(),
+                    repo_dir.display().to_string().green()
+                );
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                if stderr.contains("not found") || stderr.contains("does not exist") {
+                    return Err(anyhow::anyhow!(
+                        "Git clone failed: Repository not found\n\nTo fix:\n  - Verify the repository URL is correct\n  - Ensure you have access to the repository\n  - Try cloning manually: git clone {}",
+                        repo
+                    ));
+                } else if stderr.contains("Authentication failed")
+                    || stderr.contains("Permission denied")
+                {
+                    return Err(anyhow::anyhow!(
+                        "Git clone failed: Authentication failed\n\nTo fix:\n  - Ensure you have access to the repository\n  - Check your SSH keys or credentials\n  - Try using HTTPS URL instead of SSH (or vice versa)"
+                    ));
+                } else if stderr.contains("Could not resolve host") {
+                    return Err(anyhow::anyhow!(
+                        "Git clone failed: Network error\n\nTo fix:\n  - Check your internet connection\n  - Verify the repository host is correct"
+                    ));
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Git clone failed\n\n{}\n\nTo fix:\n  - Try cloning manually: git clone {}",
+                        stderr.trim(),
+                        repo
+                    ));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(anyhow::anyhow!(
+                    "Git is not installed or not in PATH\n\nTo fix:\n  - Install git: brew install git (macOS)\n  - Or: apt install git (Linux)"
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to execute git: {}", e));
+            }
+        }
+
+        println!();
+        println!("{}", "Scanning for secrets...".bold());
+        println!();
+
+        let mut paths_to_scan = Vec::new();
+        for entry in walkdir::WalkDir::new(&repo_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                paths_to_scan.push(entry.path().to_path_buf());
+            }
+        }
+
+        let secrets = scan_for_secrets(&paths_to_scan)?;
+
+        println!();
+
+        if !secrets.is_empty() {
+            println!("{}", "⚠ Secrets detected in repository".yellow().bold());
+            println!(
+                "  {} secret(s) found - review output above",
+                secrets.len().to_string().yellow()
+            );
+            println!();
+            println!(
+                "{}",
+                "Repository supports .secretsignore file to exclude false positives".bright_black()
+            );
+            println!();
+
+            if !self.yes {
+                let proceed = Confirm::new()
+                    .with_prompt("Secrets detected. Continue?")
+                    .default(false)
+                    .interact()?;
+
+                if !proceed {
+                    println!("{}", "Cleaning up...".yellow());
+                    fs::remove_dir_all(&repo_dir).ok();
+                    println!("{}", "Aborted.".yellow());
+                    return Ok(());
+                }
+            } else {
+                println!(
+                    "{}",
+                    "Warning: --yes flag enabled, continuing despite secrets"
+                        .yellow()
+                        .bold()
+                );
+            }
+        } else {
+            println!("  {} No secrets detected", "✓".green());
+        }
+
+        if apply_after {
+            println!();
+            println!("{}", "→ Applying configuration...".cyan());
+
+            let config_path = repo_dir.join("mimic.toml");
+            if !config_path.exists() {
+                return Err(anyhow::anyhow!(
+                    "Configuration file not found: {}\n\nTo fix:\n  - Ensure the repository contains a mimic.toml file\n  - Check that you cloned the correct repository",
+                    config_path.display()
+                ));
+            }
+
+            let apply_cli = Cli {
+                command: Commands::Apply,
+                config: Some(config_path),
+                host: self.host.clone(),
+                yes: true,
+                dry_run: self.dry_run,
+                verbose: self.verbose,
+                state: self.state.clone(),
+            };
+
+            apply_cli.run_apply()?;
+        }
+
+        println!();
+        println!("{}", "✓ Initialization complete".green().bold());
+        println!(
+            "  {}: {}",
+            "Repository cloned to".bright_black(),
+            repo_dir.display()
+        );
+
+        Ok(())
+    }
+
+    fn run_edit(&self, target: &str) -> anyhow::Result<()> {
+        use std::env;
+        use std::process::Command;
+
+        let expanded_target = if target.starts_with("~/") {
+            if let Some(home) = directories::BaseDirs::new() {
+                home.home_dir()
+                    .join(&target[2..])
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                target.to_string()
+            }
+        } else {
+            target.to_string()
+        };
+
+        let state_path = self.get_state_path();
+        let mut source_path: Option<String> = None;
+
+        if state_path.exists()
+            && let Ok(state) = State::load(&state_path) {
+                for dotfile in &state.dotfiles {
+                    if dotfile.target == expanded_target || dotfile.target == target {
+                        source_path = Some(dotfile.source.clone());
+                        if self.verbose {
+                            println!("{} Found in state: {}", "→".bright_black(), dotfile.source);
+                        }
+                        break;
+                    }
+                }
+            }
+
+        if source_path.is_none() {
+            let config_path = self.find_config().with_context(|| {
+                format!(
+                    "Target '{}' not found in state and no config file available\n\nTo fix:\n  - Run 'mimic apply' first to track dotfiles in state\n  - Or ensure mimic.toml exists and contains the target",
+                    target
+                )
+            })?;
+            let config = Config::from_file(&config_path)?;
+
+            let config_dir = config_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("Config file has no parent directory"))?;
+
+            for dotfile in &config.dotfiles {
+                let config_target = if dotfile.target.starts_with("~/") {
+                    if let Some(home) = directories::BaseDirs::new() {
+                        home.home_dir()
+                            .join(&dotfile.target[2..])
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        dotfile.target.clone()
+                    }
+                } else {
+                    dotfile.target.clone()
+                };
+
+                if config_target == expanded_target || dotfile.target == target {
+                    let source = PathBuf::from(&dotfile.source);
+                    let resolved_source = if source.is_absolute() {
+                        source
+                    } else {
+                        config_dir.join(source)
+                    };
+                    source_path = Some(resolved_source.to_string_lossy().to_string());
+                    if self.verbose {
+                        println!(
+                            "{} Found in config: {}",
+                            "→".bright_black(),
+                            resolved_source.display()
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+
+        let source = source_path.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Target '{}' not found in state or config\n\nTo fix:\n  - Check that the target path is correct\n  - Verify it's defined in your mimic.toml\n  - Run 'mimic apply' to track it in state",
+                target
+            )
+        })?;
+
+        let editor = env::var("EDITOR")
+            .ok()
+            .or_else(|| {
+                Command::new("which")
+                    .arg("vim")
+                    .output()
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .map(|_| "vim".to_string())
+            })
+            .or_else(|| {
+                Command::new("which")
+                    .arg("nano")
+                    .output()
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .map(|_| "nano".to_string())
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No editor found\n\nTo fix:\n  - Set the EDITOR environment variable: export EDITOR=vim\n  - Or install vim: brew install vim\n  - Or install nano: brew install nano"
+                )
+            })?;
+
+        if self.verbose {
+            println!("{} Opening with editor: {}", "→".bright_black(), editor);
+            println!("{} Source file: {}", "→".bright_black(), source);
+        }
+
+        let status = Command::new(&editor)
+            .arg(&source)
+            .status()
+            .with_context(|| format!("Failed to execute editor: {}", editor))?;
+
+        if !status.success() {
+            return Err(anyhow::anyhow!(
+                "Editor exited with non-zero status\n\nTo fix:\n  - Check that the file exists: {}\n  - Verify the editor works: {} --version",
+                source,
+                editor
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 pub fn run() -> Result<(), i32> {
@@ -1003,13 +1324,12 @@ pub fn run() -> Result<(), i32> {
         Err(e) => {
             eprintln!("{} {}", "Error:".red().bold(), e);
 
-            if cli.verbose {
-                if let Some(source) = e.source() {
+            if cli.verbose
+                && let Some(source) = e.source() {
                     eprintln!();
                     eprintln!("{}", "Caused by:".bright_black());
                     eprintln!("  {}", source);
                 }
-            }
 
             Err(1)
         }
