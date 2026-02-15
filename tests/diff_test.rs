@@ -186,6 +186,8 @@ fn test_diff_package_not_installed() {
         dotfiles: vec![],
         packages: Packages {
             homebrew: vec![package],
+            brew: Vec::new(),
+            cask: Vec::new(),
         },
         hosts: HashMap::new(),
         secrets: HashMap::new(),

@@ -90,6 +90,48 @@ impl Dotfile {
 pub struct Packages {
     #[serde(default)]
     pub homebrew: Vec<Package>,
+    
+    /// Simple format: list of formula names
+    #[serde(default)]
+    pub brew: Vec<String>,
+    
+    /// Simple format: list of cask names
+    #[serde(default)]
+    pub cask: Vec<String>,
+}
+
+impl Packages {
+    /// Merge simple format (brew/cask) into homebrew Vec<Package>
+    /// This allows both formats to coexist
+    pub fn normalized(&self) -> Self {
+        let mut homebrew = self.homebrew.clone();
+        
+        // Add brew formulas
+        for name in &self.brew {
+            homebrew.push(Package {
+                name: name.clone(),
+                pkg_type: "formula".to_string(),
+                only_roles: None,
+                skip_roles: None,
+            });
+        }
+        
+        // Add casks
+        for name in &self.cask {
+            homebrew.push(Package {
+                name: name.clone(),
+                pkg_type: "cask".to_string(),
+                only_roles: None,
+                skip_roles: None,
+            });
+        }
+        
+        Packages {
+            homebrew,
+            brew: Vec::new(),
+            cask: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -175,10 +217,9 @@ impl Config {
         let mut merged_dotfiles = self.dotfiles.clone();
         merged_dotfiles.extend(host.dotfiles.clone());
 
-        let mut merged_packages = self.packages.clone();
-        merged_packages
-            .homebrew
-            .extend(host.packages.homebrew.clone());
+        let mut merged_packages = self.packages.normalized();
+        let host_packages = host.packages.normalized();
+        merged_packages.homebrew.extend(host_packages.homebrew);
 
         let mut merged_hooks = self.hooks.clone();
         merged_hooks.extend(host.hooks.clone());

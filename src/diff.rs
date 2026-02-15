@@ -89,7 +89,8 @@ impl DiffEngine {
             changes.push(change);
         }
 
-        for package in &config.packages.homebrew {
+        let normalized_packages = config.packages.normalized();
+        for package in &normalized_packages.homebrew {
             let change = self.diff_package(&package.name)?;
             changes.push(change);
         }

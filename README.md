@@ -132,22 +132,9 @@ source = "dotfiles/nvim"
 target = "~/.config/nvim"
 
 # Packages you want installed
-[[packages.homebrew]]
-name = "git"
-type = "formula"
-
-[[packages.homebrew]]
-name = "neovim"
-type = "formula"
-
-[[packages.homebrew]]
-name = "tmux"
-type = "formula"
-
-# GUI applications (casks)
-[[packages.homebrew]]
-name = "visual-studio-code"
-type = "cask"
+[packages]
+brew = ["git", "neovim", "tmux"]
+cask = ["visual-studio-code"]
 ```
 
 ### Step 5: Preview the Changes
@@ -473,13 +460,8 @@ target = "~/.zshrc"
 source = "dotfiles/gitconfig"
 target = "~/.gitconfig"
 
-[[packages.homebrew]]
-name = "git"
-type = "formula"
-
-[[packages.homebrew]]
-name = "neovim"
-type = "formula"
+[packages]
+brew = ["git", "neovim"]
 ```
 
 #### 2. Preview changes
@@ -718,9 +700,17 @@ key = "value"
 source = "path/to/source"
 target = "path/to/target"
 
+# Simple format (recommended)
+[packages]
+brew = ["git", "neovim", "ripgrep"]
+cask = ["visual-studio-code", "docker"]
+
+# Or use verbose format for role filtering
 [[packages.homebrew]]
 name = "package-name"
 type = "formula"  # or "cask"
+only_roles = ["work"]  # optional: only install on hosts with these roles
+skip_roles = ["server"]  # optional: skip on hosts with these roles
 ```
 
 ### Variables section
@@ -760,10 +750,22 @@ target = "~/.zshrc"          # Where to create symlink (~ expands to home dir)
 
 Packages are installed via Homebrew (macOS/Linux).
 
+**Simple format (recommended):**
+
+```toml
+[packages]
+brew = ["git", "neovim", "tmux", "ripgrep"]
+cask = ["visual-studio-code", "docker"]
+```
+
+**Verbose format (for role filtering):**
+
 ```toml
 [[packages.homebrew]]
-name = "git"           # Package name as it appears in brew
-type = "formula"       # "formula" for CLI tools, "cask" for GUI apps
+name = "git"
+type = "formula"  # "formula" for CLI tools, "cask" for GUI apps
+only_roles = ["work"]  # optional: only install on hosts with these roles
+skip_roles = ["server"]  # optional: skip on hosts with these roles
 ```
 
 **Package behavior:**

@@ -307,6 +307,8 @@ impl Cli {
             dotfiles: filtered_dotfiles,
             packages: crate::config::Packages {
                 homebrew: filtered_packages,
+                brew: Vec::new(),
+                cask: Vec::new(),
             },
             hosts: config.hosts,
             hooks: config.hooks,
@@ -455,7 +457,8 @@ impl Cli {
         }
 
         let homebrew = HomebrewManager::new();
-        for package in &config.packages.homebrew {
+        let normalized_packages = config.packages.normalized();
+        for package in &normalized_packages.homebrew {
             if !should_apply_for_roles(&package.only_roles, &package.skip_roles, &host_ctx.roles) {
                 if self.verbose {
                     println!("  {} {} (role mismatch)", "↷".bright_black(), package.name);

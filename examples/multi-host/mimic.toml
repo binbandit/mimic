@@ -35,13 +35,8 @@ target = "~/.bashrc"
 only_roles = ["server", "headless"]
 
 # Shared packages (installed on all hosts)
-[[packages.homebrew]]
-name = "git"
-type = "formula"
-
-[[packages.homebrew]]
-name = "curl"
-type = "formula"
+[packages]
+brew = ["git", "curl"]
 
 # Personal tools - skip on work machines
 [[packages.homebrew]]
@@ -112,9 +107,8 @@ target = "~/.zshrc"
 source = "dotfiles/personal-ssh-config"
 target = "~/.ssh/config"
 
-[[hosts.personal-macbook.packages.homebrew]]
-name = "neovim"
-type = "formula"
+[hosts.personal-macbook.packages]
+brew = ["neovim"]
 
 [[hosts.personal-macbook.hooks]]
 type = "pnpm-global"
@@ -148,13 +142,9 @@ target = "~/.zshrc"
 source = "dotfiles/work-ssh-config"
 target = "~/.ssh/config"
 
-[[hosts.work-macbook.packages.homebrew]]
-name = "neovim"
-type = "formula"
-
-[[hosts.work-macbook.packages.homebrew]]
-name = "corporate-vpn"
-type = "cask"
+[hosts.work-macbook.packages]
+brew = ["neovim"]
+cask = ["corporate-vpn"]
 
 # Home desktop (Linux)
 [hosts.home-desktop]
@@ -185,11 +175,6 @@ monitoring_enabled = "true"
 source = "dotfiles/server-bashrc"
 target = "~/.bashrc"
 
-[[hosts.home-server.packages.homebrew]]
-name = "htop"
-type = "formula"
-
-[[hosts.home-server.packages.homebrew]]
-name = "tmux"
-type = "formula"
+[hosts.home-server.packages]
+brew = ["htop", "tmux"]
 

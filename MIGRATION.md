@@ -34,7 +34,7 @@ Example structure:
 - [ ] Create `mimic.toml` in repository root
 - [ ] Add `[variables]` section with your personal info
 - [ ] Add `[[dotfiles]]` entries for each file/directory
-- [ ] Add `[[packages.homebrew]]` entries for tools you need
+- [ ] Add `[packages]` section with brew/cask lists
 - [ ] Verify all source paths are relative to config file location
 
 Minimal mimic.toml:
@@ -46,9 +46,9 @@ email = "your@email.com"
 source = "dotfiles/zshrc"
 target = "~/.zshrc"
 
-[[packages.homebrew]]
-name = "git"
-type = "formula"
+[packages]
+brew = ["git", "neovim"]
+cask = ["visual-studio-code"]
 ```
 
 ## Testing

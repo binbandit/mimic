@@ -10,14 +10,6 @@ target = "~/.zshrc"
 source = "dotfiles/git/gitconfig"
 target = "~/.gitconfig"
 
-[[packages.homebrew]]
-name = "git"
-type = "formula"
-
-[[packages.homebrew]]
-name = "tmux"
-type = "formula"
-
-[[packages.homebrew]]
-name = "docker"
-type = "cask"
+[packages]
+brew = ["git", "tmux"]
+cask = ["docker"]

@@ -178,3 +178,87 @@ fn test_parse_config_from_file() {
 
     fs::remove_file(temp_path).ok();
 }
+
+#[test]
+fn test_parse_simple_package_format() {
+    let toml_str = r#"
+        [packages]
+        brew = ["git", "neovim", "ripgrep"]
+        cask = ["visual-studio-code", "docker"]
+    "#;
+
+    let config = Config::from_str(toml_str).expect("Failed to parse simple package format");
+
+    assert_eq!(config.packages.brew.len(), 3);
+    assert_eq!(config.packages.cask.len(), 2);
+    assert_eq!(config.packages.brew[0], "git");
+    assert_eq!(config.packages.cask[0], "visual-studio-code");
+}
+
+#[test]
+fn test_normalized_simple_format() {
+    let toml_str = r#"
+        [packages]
+        brew = ["git", "neovim"]
+        cask = ["docker"]
+    "#;
+
+    let config = Config::from_str(toml_str).expect("Failed to parse simple format");
+    let normalized = config.packages.normalized();
+
+    assert_eq!(normalized.homebrew.len(), 3);
+    assert_eq!(normalized.homebrew[0].name, "git");
+    assert_eq!(normalized.homebrew[0].pkg_type, "formula");
+    assert_eq!(normalized.homebrew[1].name, "neovim");
+    assert_eq!(normalized.homebrew[1].pkg_type, "formula");
+    assert_eq!(normalized.homebrew[2].name, "docker");
+    assert_eq!(normalized.homebrew[2].pkg_type, "cask");
+}
+
+#[test]
+fn test_backwards_compatible_verbose_format() {
+    let toml_str = r#"
+        [[packages.homebrew]]
+        name = "git"
+        type = "formula"
+
+        [[packages.homebrew]]
+        name = "docker"
+        type = "cask"
+    "#;
+
+    let config = Config::from_str(toml_str).expect("Failed to parse verbose format");
+
+    assert_eq!(config.packages.homebrew.len(), 2);
+    assert_eq!(config.packages.homebrew[0].name, "git");
+    assert_eq!(config.packages.homebrew[0].pkg_type, "formula");
+    assert_eq!(config.packages.homebrew[1].name, "docker");
+    assert_eq!(config.packages.homebrew[1].pkg_type, "cask");
+}
+
+#[test]
+fn test_mixed_package_formats() {
+    let toml_str = r#"
+        [packages]
+        brew = ["git", "neovim"]
+        cask = ["docker"]
+
+        [[packages.homebrew]]
+        name = "tmux"
+        type = "formula"
+        only_roles = ["work"]
+    "#;
+
+    let config = Config::from_str(toml_str).expect("Failed to parse mixed format");
+    let normalized = config.packages.normalized();
+
+    assert_eq!(normalized.homebrew.len(), 4);
+    assert_eq!(normalized.homebrew[0].name, "tmux");
+    assert_eq!(
+        normalized.homebrew[0].only_roles,
+        Some(vec!["work".to_string()])
+    );
+    assert_eq!(normalized.homebrew[1].name, "git");
+    assert_eq!(normalized.homebrew[1].pkg_type, "formula");
+    assert!(normalized.homebrew[1].only_roles.is_none());
+}

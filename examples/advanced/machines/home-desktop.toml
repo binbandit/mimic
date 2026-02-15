@@ -18,22 +18,6 @@ target = "~/.vimrc"
 source = "dotfiles/tmux/tmux.conf"
 target = "~/.tmux.conf"
 
-[[packages.homebrew]]
-name = "git"
-type = "formula"
-
-[[packages.homebrew]]
-name = "neovim"
-type = "formula"
-
-[[packages.homebrew]]
-name = "tmux"
-type = "formula"
-
-[[packages.homebrew]]
-name = "fzf"
-type = "formula"
-
-[[packages.homebrew]]
-name = "visual-studio-code"
-type = "cask"
+[packages]
+brew = ["git", "neovim", "tmux", "fzf"]
+cask = ["visual-studio-code"]

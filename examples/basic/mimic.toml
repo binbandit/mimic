@@ -15,14 +15,5 @@ target = "~/.gitconfig"
 source = "dotfiles/vimrc"
 target = "~/.vimrc"
 
-[[packages.homebrew]]
-name = "git"
-type = "formula"
-
-[[packages.homebrew]]
-name = "neovim"
-type = "formula"
-
-[[packages.homebrew]]
-name = "ripgrep"
-type = "formula"
+[packages]
+brew = ["git", "neovim", "ripgrep"]

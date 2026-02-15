@@ -28,30 +28,5 @@ target = "~/.vimrc"
 source = "dotfiles/tmux/tmux.conf"
 target = "~/.tmux.conf"
 
-[[packages.homebrew]]
-name = "git"
-type = "formula"
-
-[[packages.homebrew]]
-name = "neovim"
-type = "formula"
-
-[[packages.homebrew]]
-name = "tmux"
-type = "formula"
-
-[[packages.homebrew]]
-name = "fzf"
-type = "formula"
-
-[[packages.homebrew]]
-name = "ripgrep"
-type = "formula"
-
-[[packages.homebrew]]
-name = "bat"
-type = "formula"
-
-[[packages.homebrew]]
-name = "exa"
-type = "formula"
+[packages]
+brew = ["git", "neovim", "tmux", "fzf", "ripgrep", "bat", "exa"]
