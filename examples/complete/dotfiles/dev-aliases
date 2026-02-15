@@ -1,0 +1,21 @@
+alias docker-clean='docker system prune -af'
+alias docker-stop-all='docker stop $(docker ps -aq)'
+alias docker-rm-all='docker rm $(docker ps -aq)'
+
+alias k='kubectl'
+alias kgp='kubectl get pods'
+alias kgs='kubectl get services'
+alias kgd='kubectl get deployments'
+
+alias dc='docker-compose'
+alias dcu='docker-compose up -d'
+alias dcd='docker-compose down'
+alias dcl='docker-compose logs -f'
+
+mkproject() {
+    mkdir -p "$1" && cd "$1" && git init
+}
+
+ghclone() {
+    git clone "git@github.com:$1.git"
+}

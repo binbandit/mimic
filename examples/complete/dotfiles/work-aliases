@@ -1,0 +1,16 @@
+alias vpn-connect='sudo openconnect --background vpn.company.com'
+alias vpn-disconnect='sudo killall openconnect'
+
+alias jira='open "https://company.atlassian.net"'
+alias confluence='open "https://company.atlassian.net/wiki"'
+
+alias aws-login='aws sso login --profile work'
+
+deploy-staging() {
+    git push origin main && kubectl rollout restart deployment/app -n staging
+}
+
+deploy-prod() {
+    echo "Deploying to production..."
+    git push origin main && kubectl rollout restart deployment/app -n production
+}

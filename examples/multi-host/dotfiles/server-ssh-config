@@ -1,0 +1,15 @@
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_server
+    AddKeysToAgent yes
+
+Host *.homelab.local
+    User admin
+    IdentityFile ~/.ssh/id_ed25519_server
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+
+Host *
+    ServerAliveInterval 60
+    ServerAliveCountMax 3

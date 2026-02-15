@@ -1,0 +1,34 @@
+[variables]
+email = "dev@example.com"
+name = "Developer Name"
+
+[[dotfiles]]
+source = "dotfiles/zsh/zshrc"
+target = "~/.zshrc"
+
+[[dotfiles]]
+source = "dotfiles/zsh/zshenv"
+target = "~/.zshenv"
+
+[[dotfiles]]
+source = "dotfiles/zsh/aliases"
+target = "~/.config/zsh/aliases"
+
+[[dotfiles]]
+source = "dotfiles/git/gitconfig"
+target = "~/.gitconfig"
+
+[[dotfiles]]
+source = "dotfiles/git/gitignore_global"
+target = "~/.gitignore_global"
+
+[[dotfiles]]
+source = "dotfiles/nvim"
+target = "~/.config/nvim"
+
+[[dotfiles]]
+source = "dotfiles/tmux/tmux.conf"
+target = "~/.tmux.conf"
+
+[packages]
+brew = ["git", "neovim", "tmux", "ripgrep", "fd", "bat", "exa", "fzf", "delta"]

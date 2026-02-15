@@ -1,9 +1,9 @@
 [user]
-    name = Your Name
-    email = user@example.com
+    name = {{ name }}
+    email = {{ email }}
 
 [core]
-    editor = nvim
+    editor = {{ editor }}
     pager = delta
     autocrlf = input
     excludesfile = ~/.gitignore_global
@@ -29,8 +29,6 @@
     co = checkout
     br = branch
     ci = commit
-    unstage = reset HEAD --
-    last = log -1 HEAD
     lg = log --oneline --graph --all --decorate
     aliases = config --get-regexp alias
 
@@ -43,8 +41,13 @@
 [merge]
     conflictstyle = zdiff3
 
+[url "git@github.com:{{ github_username }}/"]
+    insteadOf = https://github.com/{{ github_username }}/
+
+[github]
+    user = {{ github_username }}
+
 [delta]
     navigate = true
-    light = false
     side-by-side = true
     line-numbers = true

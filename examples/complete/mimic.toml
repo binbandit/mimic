@@ -1,0 +1,103 @@
+[variables]
+name = "Alex Developer"
+email = "alex@example.com"
+editor = "nvim"
+github_username = "alexdev"
+
+[secrets]
+github_token = { description = "GitHub personal access token for API access", env_var = "GITHUB_TOKEN" }
+openai_api_key = { description = "OpenAI API key for AI-powered tools", env_var = "OPENAI_API_KEY" }
+
+[[dotfiles]]
+source = "templates/gitconfig.tmpl"
+target = "~/.gitconfig"
+template = true
+
+[[dotfiles]]
+source = "templates/zshrc.tmpl"
+target = "~/.zshrc"
+
+[[dotfiles]]
+source = "dotfiles/tmux.conf"
+target = "~/.tmux.conf"
+
+[[dotfiles]]
+source = "templates/npmrc.tmpl"
+target = "~/.npmrc"
+
+[packages]
+brew = ["git", "neovim", "tmux", "ripgrep", "fd", "bat", "exa", "delta", "fzf"]
+cask = ["visual-studio-code"]
+
+[[hooks]]
+type = "rustup"
+toolchains = ["stable", "nightly"]
+components = ["rustfmt", "clippy", "rust-analyzer"]
+targets = []
+default = "stable"
+
+[[hooks]]
+type = "mise"
+
+[[hooks]]
+type = "cargo-install"
+packages = [
+    { name = "tap", git = "https://github.com/crazywolf132/tap.git" },
+]
+
+[[hooks]]
+type = "pnpm-global"
+packages = ["typescript", "@biomejs/biome", "prettier"]
+
+[[hooks]]
+type = "command"
+name = "setup-complete"
+command = "echo 'Development environment fully configured!'"
+on_failure = "continue"
+
+[mise]
+tools = { node = "20", python = "3.12", go = "1.21" }
+
+[hosts.dev-laptop]
+roles = ["personal", "mac", "desktop"]
+
+[hosts.dev-laptop.variables]
+email = "alex@personal.com"
+work_dir = "~/projects"
+
+[[hosts.dev-laptop.dotfiles]]
+source = "dotfiles/dev-aliases"
+target = "~/.config/zsh/dev-aliases"
+
+[[hosts.dev-laptop.packages.homebrew]]
+name = "docker"
+type = "cask"
+
+[[hosts.dev-laptop.hooks]]
+type = "uv-python"
+version = "3.12"
+symlinks = { python3 = "~/.local/bin/python3" }
+
+[hosts.work-machine]
+roles = ["work", "mac", "desktop"]
+
+[hosts.work-machine.variables]
+email = "alex.developer@company.com"
+work_dir = "~/work"
+http_proxy = "http://proxy.company.com:8080"
+
+[[hosts.work-machine.dotfiles]]
+source = "dotfiles/work-aliases"
+target = "~/.config/zsh/work-aliases"
+
+[hosts.work-machine.secrets]
+jira_token = { description = "JIRA API token for work automation", env_var = "JIRA_TOKEN" }
+aws_access_key = { description = "AWS access key for work projects", env_var = "AWS_ACCESS_KEY_ID" }
+
+[[hosts.work-machine.packages.homebrew]]
+name = "slack"
+type = "cask"
+
+[[hosts.work-machine.packages.homebrew]]
+name = "zoom"
+type = "cask"

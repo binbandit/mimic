@@ -1,0 +1,32 @@
+export EDITOR="nvim"
+export VISUAL="$EDITOR"
+
+export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+
+autoload -Uz compinit
+compinit
+
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt HIST_IGNORE_ALL_DUPS
+setopt SHARE_HISTORY
+
+alias ls='ls -G'
+alias ll='ls -lah'
+alias vim='nvim'
+
+alias g='git'
+alias gs='git status'
+alias gc='git commit'
+
+export GIT_AUTHOR_EMAIL="jane@example.com"
+export GIT_COMMITTER_EMAIL="jane@example.com"
+export GIT_AUTHOR_NAME="Jane Developer"
+export GIT_COMMITTER_NAME="Jane Developer"
+
+export GITHUB_USER="janedeveloper"
+
+if command -v starship &> /dev/null; then
+    eval "$(starship init zsh)"
+fi

@@ -1,0 +1,28 @@
+[user]
+    name = {{ name }}
+    email = {{ email }}
+
+[core]
+    editor = {{ editor }}
+    pager = delta
+    autocrlf = input
+
+[init]
+    defaultBranch = main
+
+[pull]
+    rebase = true
+
+[push]
+    default = current
+    autoSetupRemote = true
+
+[alias]
+    st = status -sb
+    co = checkout
+    br = branch
+    ci = commit
+    lg = log --oneline --graph --all --decorate
+
+[color]
+    ui = auto

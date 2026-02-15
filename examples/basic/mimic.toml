@@ -1,8 +1,12 @@
+# Basic Example - Simple dotfile management
+# This demonstrates the core features with minimal configuration
+
 [variables]
-email = "john.doe@example.com"
-name = "John Doe"
+email = "user@example.com"
+name = "Your Name"
 editor = "nvim"
 
+# Dotfiles - create symlinks from source to target
 [[dotfiles]]
 source = "dotfiles/zshrc"
 target = "~/.zshrc"
@@ -12,8 +16,11 @@ source = "dotfiles/gitconfig"
 target = "~/.gitconfig"
 
 [[dotfiles]]
-source = "dotfiles/vimrc"
-target = "~/.vimrc"
+source = "dotfiles/tmux.conf"
+target = "~/.tmux.conf"
 
+# Packages - install via Homebrew
+# Simple format: just list the package names
 [packages]
-brew = ["git", "neovim", "ripgrep"]
+brew = ["git", "neovim", "tmux", "ripgrep", "fd", "bat", "exa"]
+cask = ["visual-studio-code"]

@@ -1,9 +1,9 @@
 [user]
-    name = Your Name
-    email = user@example.com
+    name = {{ name }}
+    email = {{ email }}
 
 [core]
-    editor = nvim
+    editor = {{ editor }}
     pager = delta
     autocrlf = input
     excludesfile = ~/.gitignore_global
@@ -21,9 +21,6 @@
 [fetch]
     prune = true
 
-[rebase]
-    autoStash = true
-
 [alias]
     st = status -sb
     co = checkout
@@ -32,7 +29,6 @@
     unstage = reset HEAD --
     last = log -1 HEAD
     lg = log --oneline --graph --all --decorate
-    aliases = config --get-regexp alias
 
 [color]
     ui = auto
@@ -43,8 +39,8 @@
 [merge]
     conflictstyle = zdiff3
 
-[delta]
-    navigate = true
-    light = false
-    side-by-side = true
-    line-numbers = true
+[url "git@github.com:{{ github_username }}/"]
+    insteadOf = https://github.com/{{ github_username }}/
+
+[github]
+    user = {{ github_username }}

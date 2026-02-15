@@ -1,0 +1,22 @@
+[variables]
+name = "Jane Developer"
+email = "jane@example.com"
+editor = "nvim"
+github_username = "janedeveloper"
+work_email = "jane.developer@company.com"
+
+[[dotfiles]]
+source = "dotfiles/gitconfig.tmpl"
+target = "~/.gitconfig"
+template = true
+
+[[dotfiles]]
+source = "dotfiles/zshrc.tmpl"
+target = "~/.zshrc"
+
+[[dotfiles]]
+source = "dotfiles/ssh-config.tmpl"
+target = "~/.ssh/config"
+
+[packages]
+brew = ["git", "gh", "neovim"]

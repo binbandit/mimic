@@ -1,180 +1,82 @@
-# Multi-Host Configuration Example
-# This example demonstrates managing multiple machines from a single config
-
-# Shared defaults for all hosts
 [variables]
+email = "default@example.com"
+name = "Default User"
 editor = "nvim"
-shell = "fish"
-theme = "dracula"
 
-# Secrets metadata (declares expected secrets for documentation)
-[secrets]
-openai_api_key = { description = "OpenAI API key for AI tools", env_var = "OPENAI_API_KEY" }
-anthropic_api_key = { description = "Anthropic Claude API key", env_var = "ANTHROPIC_API_KEY" }
-github_token = { description = "GitHub personal access token", env_var = "GITHUB_TOKEN" }
-
-# Shared dotfiles (applied to all hosts)
 [[dotfiles]]
-source = "dotfiles/gitconfig"
+source = "dotfiles/gitconfig.tmpl"
 target = "~/.gitconfig"
 
 [[dotfiles]]
-source = "dotfiles/vimrc"
-target = "~/.vimrc"
+source = "dotfiles/tmux.conf"
+target = "~/.tmux.conf"
 
-# Shared template - generates fish config per host
-[[dotfiles]]
-source = "templates/fish-config.fish.tmpl"
-target = "~/.config/fish/config.fish"
-template = true
-
-# Server-specific dotfile - only on server/headless machines
-[[dotfiles]]
-source = "dotfiles/server-bashrc"
-target = "~/.bashrc"
-only_roles = ["server", "headless"]
-
-# Shared packages (installed on all hosts)
 [packages]
-brew = ["git", "curl"]
+brew = ["git", "curl", "tmux"]
 
-# Personal tools - skip on work machines
-[[packages.homebrew]]
-name = "spotify"
-type = "cask"
-skip_roles = ["work"]
-
-[[packages.homebrew]]
-name = "discord"
-type = "cask"
-skip_roles = ["work", "server"]
-
-# Work tools - only on work machines
-[[packages.homebrew]]
-name = "slack"
-type = "cask"
-only_roles = ["work"]
-
-[[packages.homebrew]]
-name = "zoom"
-type = "cask"
-only_roles = ["work"]
-
-# Development tools - only on powerful machines
-[[packages.homebrew]]
-name = "docker"
-type = "cask"
-only_roles = ["desktop", "powerful"]
-
-# Activation hooks (run after dotfiles and packages applied)
-[[hooks]]
-type = "rustup"
-toolchains = ["stable", "nightly"]
-components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]
-targets = ["x86_64-unknown-linux-musl"]
-default = "nightly"
-
-[[hooks]]
-type = "mise"
-
-# Development setup - only on powerful machines
-[[hooks]]
-type = "uv-python"
-version = "3.12"
-only_roles = ["desktop", "powerful"]
-symlinks = { python3 = "~/.local/bin/python3" }
-
-[[hooks]]
-type = "command"
-name = "setup-dev-tools"
-command = "echo 'Dev environment ready'"
-on_failure = "continue"
-
-# Personal laptop configuration
 [hosts.personal-macbook]
-roles = ["personal", "mac", "portable"]
+roles = ["personal", "mac", "desktop"]
 
 [hosts.personal-macbook.variables]
-email = "user@personal.com"
-openai_model = "gpt-5-nano"
-git_signing_key = "ABC123"
+email = "jane@personal.com"
+name = "Jane Developer"
+github_username = "janedeveloper"
 
 [[hosts.personal-macbook.dotfiles]]
 source = "dotfiles/personal-zshrc"
 target = "~/.zshrc"
 
-[[hosts.personal-macbook.dotfiles]]
-source = "dotfiles/personal-ssh-config"
-target = "~/.ssh/config"
+[[hosts.personal-macbook.packages.homebrew]]
+name = "spotify"
+type = "cask"
 
-[hosts.personal-macbook.packages]
-brew = ["neovim"]
+[[hosts.personal-macbook.packages.homebrew]]
+name = "discord"
+type = "cask"
 
-[[hosts.personal-macbook.hooks]]
-type = "pnpm-global"
-packages = ["typescript", "@biomejs/biome"]
+[hosts.work-laptop]
+roles = ["work", "mac", "desktop"]
 
-[[hosts.personal-macbook.hooks]]
-type = "cargo-install"
-packages = [
-    { name = "tap", git = "https://github.com/crazywolf132/tap.git" },
-    { name = "sg", git = "https://github.com/sage-scm/sage.git", bin = "sg" },
-]
+[hosts.work-laptop.variables]
+email = "jane.developer@company.com"
+name = "Jane Developer"
+github_username = "janedeveloper-work"
+http_proxy = "http://proxy.company.com:8080"
 
-# Work laptop configuration
-[hosts.work-macbook]
-roles = ["work", "mac", "portable"]
-
-[hosts.work-macbook.variables]
-email = "user@corp.com"
-http_proxy = "http://localhost:3128"
-git_signing_key = "DEF456"
-
-[hosts.work-macbook.secrets]
-corporate_vpn_password = { description = "Corporate VPN password", env_var = "VPN_PASSWORD" }
-jira_api_token = { description = "JIRA API token for work automation", env_var = "JIRA_TOKEN" }
-
-[[hosts.work-macbook.dotfiles]]
+[[hosts.work-laptop.dotfiles]]
 source = "dotfiles/work-zshrc"
 target = "~/.zshrc"
 
-[[hosts.work-macbook.dotfiles]]
+[[hosts.work-laptop.dotfiles]]
 source = "dotfiles/work-ssh-config"
 target = "~/.ssh/config"
 
-[hosts.work-macbook.packages]
-brew = ["neovim"]
-cask = ["corporate-vpn"]
+[[hosts.work-laptop.packages.homebrew]]
+name = "slack"
+type = "cask"
 
-# Home desktop (Linux)
-[hosts.home-desktop]
-roles = ["personal", "linux", "desktop", "powerful"]
+[[hosts.work-laptop.packages.homebrew]]
+name = "zoom"
+type = "cask"
 
-[hosts.home-desktop.variables]
-email = "user@personal.com"
-display_scale = "1.5"
-openai_model = "gpt-5-nano"
+[[hosts.work-laptop.packages.homebrew]]
+name = "docker"
+type = "cask"
 
-[[hosts.home-desktop.dotfiles]]
-source = "dotfiles/personal-bashrc"
-target = "~/.bashrc"
-
-[[hosts.home-desktop.dotfiles]]
-source = "dotfiles/i3-config"
-target = "~/.config/i3/config"
-
-# Server configuration (minimal)
 [hosts.home-server]
 roles = ["server", "linux", "headless"]
 
 [hosts.home-server.variables]
 email = "admin@homelab.local"
-monitoring_enabled = "true"
+name = "Server Admin"
 
 [[hosts.home-server.dotfiles]]
 source = "dotfiles/server-bashrc"
 target = "~/.bashrc"
 
-[hosts.home-server.packages]
-brew = ["htop", "tmux"]
+[[hosts.home-server.dotfiles]]
+source = "dotfiles/server-ssh-config"
+target = "~/.ssh/config"
 
+[hosts.home-server.packages]
+brew = ["htop", "ncdu", "iotop"]

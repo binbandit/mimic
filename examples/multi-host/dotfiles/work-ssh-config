@@ -1,0 +1,22 @@
+Host github-work
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_work_ed25519
+    AddKeysToAgent yes
+
+Host gitlab-work
+    HostName gitlab.company.com
+    User git
+    IdentityFile ~/.ssh/id_work_ed25519
+    AddKeysToAgent yes
+    ProxyCommand nc -X connect -x proxy.company.com:8080 %h %p
+
+Host *.company.com
+    User janedeveloper
+    IdentityFile ~/.ssh/id_work_ed25519
+    ProxyCommand nc -X connect -x proxy.company.com:8080 %h %p
+
+Host *
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    Compression yes
