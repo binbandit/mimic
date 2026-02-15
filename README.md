@@ -18,18 +18,10 @@ mimic is a CLI tool for managing your development environment configuration. It 
 
 ## Installation
 
-### From source
-
 ```bash
-git clone https://github.com/yourusername/mimic.git
+git clone https://github.com/binbandit/mimic.git
 cd mimic
 cargo install --path .
-```
-
-### From crates.io
-
-```bash
-cargo install mimic
 ```
 
 ## Converting Your Existing Dotfiles to mimic
@@ -221,7 +213,7 @@ git add .
 git commit -m "Add mimic configuration"
 
 # Push to GitHub (optional but recommended)
-git remote add origin https://github.com/yourusername/dotfiles.git
+git remote add origin https://github.com/binbandit/dotfiles.git
 git push -u origin main
 ```
 
@@ -687,6 +679,109 @@ mimic edit ~/.zshrc --verbose
 - Provides clear error if target not found in state or config
 - Guides user to set `$EDITOR` if no editor available
 - Shows actionable steps for common issues
+
+### `mimic hosts`
+
+List and inspect multi-machine configurations.
+
+```bash
+mimic hosts <COMMAND>
+```
+
+**Subcommands:**
+- `list` - List all configured hosts
+- `show <HOST>` - Show merged configuration for a specific host
+
+**Examples:**
+
+```bash
+# List all available hosts
+mimic hosts list
+
+# Show what config a specific host would use
+mimic hosts show work-laptop
+
+# Preview configuration inheritance
+mimic hosts show personal-macbook --verbose
+```
+
+**Behavior:**
+- Lists all hosts defined in `[hosts.*]` sections
+- Shows merged config after inheritance resolution
+- Useful for debugging multi-machine setups
+
+### `mimic render`
+
+Preview template rendering without applying changes.
+
+```bash
+mimic render <TEMPLATE> [OPTIONS]
+```
+
+**Arguments:**
+- `<TEMPLATE>` - Path to template file (`.tmpl` or `.hbs`)
+
+**Options:**
+- `--config <PATH>` - Path to config file (for variables)
+- `--host <HOST>` - Render with host-specific variables
+
+**Examples:**
+
+```bash
+# Preview template output
+mimic render dotfiles/config.fish.tmpl
+
+# Render with specific host variables
+mimic render dotfiles/gitconfig.tmpl --host work-laptop
+
+# Check what variables are available
+mimic render templates/zshrc.tmpl --verbose
+```
+
+**Behavior:**
+- Renders Handlebars template with current variables
+- Shows output to stdout (doesn't write files)
+- Useful for debugging template syntax and variables
+
+### `mimic secrets`
+
+Manage secrets stored in macOS Keychain.
+
+```bash
+mimic secrets <COMMAND>
+```
+
+**Subcommands:**
+- `set <KEY>` - Store a secret (prompts for value)
+- `get <KEY>` - Retrieve a secret value
+- `list` - List all stored secrets
+- `rm <KEY>` - Remove a secret
+- `export` - Export secrets as shell environment variables
+
+**Examples:**
+
+```bash
+# Store a secret (will prompt for value)
+mimic secrets set github_token
+
+# Retrieve a secret
+mimic secrets get github_token
+
+# List all secrets
+mimic secrets list
+
+# Export as environment variables
+eval $(mimic secrets export)
+
+# Remove a secret
+mimic secrets rm old_api_key
+```
+
+**Behavior:**
+- Stores secrets in macOS Keychain (secure, encrypted)
+- Secrets can be referenced in config as `{{ secrets.KEY }}`
+- Export format: `export KEY="value"`
+- Only works on macOS (requires Keychain access)
 
 ## Configuration Reference
 
