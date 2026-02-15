@@ -5,5 +5,7 @@ pub mod error;
 pub mod hooks;
 pub mod installer;
 pub mod linker;
+pub mod mise;
+pub mod secrets;
 pub mod state;
 pub mod template;

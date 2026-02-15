@@ -32,6 +32,8 @@ pub fn render_template_with_host(
 
     handlebars.register_helper("includes", Box::new(includes));
 
+    let secrets = crate::secrets::get_all_secrets();
+
     let context = json!({
         "variables": variables,
         "host": {
@@ -44,6 +46,7 @@ pub fn render_template_with_host(
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
         },
+        "secrets": secrets,
     });
 
     handlebars

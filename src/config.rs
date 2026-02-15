@@ -20,6 +20,12 @@ pub struct Config {
 
     #[serde(default)]
     pub hooks: Vec<Hook>,
+
+    #[serde(default)]
+    pub secrets: HashMap<String, SecretMetadata>,
+
+    #[serde(default)]
+    pub mise: MiseSection,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -41,6 +47,24 @@ pub struct HostConfig {
 
     #[serde(default)]
     pub hooks: Vec<Hook>,
+
+    #[serde(default)]
+    pub secrets: HashMap<String, SecretMetadata>,
+
+    #[serde(default)]
+    pub mise: MiseSection,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SecretMetadata {
+    pub description: Option<String>,
+    pub env_var: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct MiseSection {
+    #[serde(default)]
+    pub tools: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -158,12 +182,24 @@ impl Config {
         let mut merged_hooks = self.hooks.clone();
         merged_hooks.extend(host.hooks.clone());
 
+        let mut merged_secrets = self.secrets.clone();
+        for (key, value) in &host.secrets {
+            merged_secrets.insert(key.clone(), value.clone());
+        }
+
+        let mut merged_mise = self.mise.clone();
+        for (key, value) in &host.mise.tools {
+            merged_mise.tools.insert(key.clone(), value.clone());
+        }
+
         Ok(Config {
             variables: merged_vars,
             dotfiles: merged_dotfiles,
             packages: merged_packages,
             hosts: self.hosts.clone(),
             hooks: merged_hooks,
+            secrets: merged_secrets,
+            mise: merged_mise,
         })
     }
 

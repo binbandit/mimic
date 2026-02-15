@@ -7,6 +7,12 @@ editor = "nvim"
 shell = "fish"
 theme = "dracula"
 
+# Secrets metadata (declares expected secrets for documentation)
+[secrets]
+openai_api_key = { description = "OpenAI API key for AI tools", env_var = "OPENAI_API_KEY" }
+anthropic_api_key = { description = "Anthropic Claude API key", env_var = "ANTHROPIC_API_KEY" }
+github_token = { description = "GitHub personal access token", env_var = "GITHUB_TOKEN" }
+
 # Shared dotfiles (applied to all hosts)
 [[dotfiles]]
 source = "dotfiles/gitconfig"
@@ -129,6 +135,10 @@ roles = ["work", "mac", "portable"]
 email = "user@corp.com"
 http_proxy = "http://localhost:3128"
 git_signing_key = "DEF456"
+
+[hosts.work-macbook.secrets]
+corporate_vpn_password = { description = "Corporate VPN password", env_var = "VPN_PASSWORD" }
+jira_api_token = { description = "JIRA API token for work automation", env_var = "JIRA_TOKEN" }
 
 [[hosts.work-macbook.dotfiles]]
 source = "dotfiles/work-zshrc"

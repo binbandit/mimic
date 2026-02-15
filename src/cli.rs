@@ -64,6 +64,39 @@ pub enum Commands {
         #[arg(help = "Path to template file")]
         template: String,
     },
+
+    #[command(about = "Manage secrets in macOS Keychain", subcommand)]
+    Secrets(SecretsCommands),
+}
+
+#[derive(Subcommand)]
+pub enum SecretsCommands {
+    #[command(about = "Store a secret")]
+    Set {
+        #[arg(help = "Secret key name")]
+        key: String,
+
+        #[arg(long, help = "Read value from stdin")]
+        stdin: bool,
+    },
+
+    #[command(about = "Retrieve a secret")]
+    Get {
+        #[arg(help = "Secret key name")]
+        key: String,
+    },
+
+    #[command(about = "List all secrets")]
+    List,
+
+    #[command(about = "Remove a secret")]
+    Rm {
+        #[arg(help = "Secret key name")]
+        key: String,
+    },
+
+    #[command(about = "Export secrets as shell environment variables")]
+    Export,
 }
 
 #[derive(Subcommand)]
@@ -87,6 +120,7 @@ impl Cli {
             Commands::Undo => self.run_undo(),
             Commands::Hosts(hosts_cmd) => self.run_hosts(hosts_cmd),
             Commands::Render { template } => self.run_render(template),
+            Commands::Secrets(secrets_cmd) => self.run_secrets(secrets_cmd),
         }
     }
 
@@ -226,10 +260,47 @@ impl Cli {
     }
 
     fn run_diff(&self) -> anyhow::Result<()> {
-        let (config, _host_name) = self.resolve_config_and_host()?;
+        let (config, host_name) = self.resolve_config_and_host()?;
+
+        let host_roles = if let Some(ref host_name) = host_name {
+            config
+                .hosts
+                .get(host_name)
+                .map(|h| h.roles.clone())
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        let filtered_dotfiles: Vec<_> = config
+            .dotfiles
+            .iter()
+            .filter(|df| should_apply_for_roles(&df.only_roles, &df.skip_roles, &host_roles))
+            .cloned()
+            .collect();
+
+        let filtered_packages: Vec<_> = config
+            .packages
+            .homebrew
+            .iter()
+            .filter(|pkg| should_apply_for_roles(&pkg.only_roles, &pkg.skip_roles, &host_roles))
+            .cloned()
+            .collect();
+
+        let filtered_config = Config {
+            variables: config.variables,
+            dotfiles: filtered_dotfiles,
+            packages: crate::config::Packages {
+                homebrew: filtered_packages,
+            },
+            hosts: config.hosts,
+            hooks: config.hooks,
+            secrets: config.secrets,
+            mise: config.mise,
+        };
 
         let diff_engine = DiffEngine::new();
-        let changes = diff_engine.diff(&config)?;
+        let changes = diff_engine.diff(&filtered_config)?;
 
         if changes.is_empty() {
             println!("{}", "No changes detected.".bright_black());
@@ -844,6 +915,83 @@ impl Cli {
 
         println!("{}", rendered);
         Ok(())
+    }
+
+    fn run_secrets(&self, cmd: &SecretsCommands) -> anyhow::Result<()> {
+        use crate::secrets;
+
+        match cmd {
+            SecretsCommands::Set { key, stdin } => {
+                let value = if *stdin {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf)?;
+                    buf.trim().to_string()
+                } else {
+                    use dialoguer::Password;
+                    Password::new()
+                        .with_prompt(format!("Enter value for '{}'", key))
+                        .interact()?
+                };
+
+                secrets::set_secret(key, &value)?;
+                println!("{} Secret '{}' stored in keychain", "✓".green(), key);
+                Ok(())
+            }
+
+            SecretsCommands::Get { key } => {
+                let value = secrets::get_secret(key)?;
+                println!("{}", value);
+                Ok(())
+            }
+
+            SecretsCommands::List => {
+                let secrets_list = secrets::list_secrets()?;
+                if secrets_list.is_empty() {
+                    println!("{}", "No secrets stored".bright_black());
+                } else {
+                    println!("{}", "Stored secrets:".bold());
+                    for key in secrets_list {
+                        println!("  • {}", key);
+                    }
+                }
+                Ok(())
+            }
+
+            SecretsCommands::Rm { key } => {
+                secrets::remove_secret(key)?;
+                println!("{} Secret '{}' removed from keychain", "✓".green(), key);
+                Ok(())
+            }
+
+            SecretsCommands::Export => {
+                let config = Config::from_file(&self.find_config()?)?;
+                let all_secrets = secrets::get_all_secrets();
+
+                if all_secrets.is_empty() {
+                    if self.verbose {
+                        eprintln!("{}", "No secrets available to export".yellow());
+                    }
+                    return Ok(());
+                }
+
+                for (key, value) in &all_secrets {
+                    let env_var = if let Some(metadata) = config.secrets.get(key) {
+                        metadata
+                            .env_var
+                            .as_ref()
+                            .cloned()
+                            .unwrap_or_else(|| key.to_uppercase())
+                    } else {
+                        key.to_uppercase()
+                    };
+
+                    println!("export {}=\"{}\"", env_var, value);
+                }
+
+                Ok(())
+            }
+        }
     }
 }
 
