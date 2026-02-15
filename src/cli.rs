@@ -5,8 +5,9 @@ use std::path::PathBuf;
 use crate::config::Config;
 use crate::diff::{Change, DiffEngine};
 use crate::installer::HomebrewManager;
-use crate::linker::{create_symlink_with_resolution, ApplyToAllChoice};
+use crate::linker::{apply_dotfile, ApplyToAllChoice};
 use crate::state::State;
+use crate::template::HostContext;
 
 #[derive(Parser)]
 #[command(name = "mimic")]
@@ -56,6 +57,12 @@ pub enum Commands {
 
     #[command(about = "Manage host configurations", subcommand)]
     Hosts(HostCommands),
+
+    #[command(about = "Render a template file to preview output")]
+    Render {
+        #[arg(help = "Path to template file")]
+        template: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -78,6 +85,7 @@ impl Cli {
             Commands::Status => self.run_status(),
             Commands::Undo => self.run_undo(),
             Commands::Hosts(hosts_cmd) => self.run_hosts(hosts_cmd),
+            Commands::Render { template } => self.run_render(template),
         }
     }
 
@@ -293,7 +301,7 @@ impl Cli {
         let state_path = self.get_state_path();
         let mut state = State::load(&state_path).unwrap_or_else(|_| State::new());
 
-        state.active_host = host_name;
+        state.active_host = host_name.clone();
 
         println!();
         println!("{}", "Applying changes...".bold());
@@ -304,25 +312,35 @@ impl Cli {
             None
         };
 
-        for dotfile in &config.dotfiles {
-            let source = PathBuf::from(&dotfile.source);
-            let target = PathBuf::from(&dotfile.target);
+        let host_ctx = if let Some(ref host_name) = host_name {
+            let host_config = config.hosts.get(host_name).unwrap();
+            HostContext {
+                name: host_name.clone(),
+                roles: host_config.roles.clone(),
+            }
+        } else {
+            HostContext {
+                name: "default".to_string(),
+                roles: vec![],
+            }
+        };
 
+        for dotfile in &config.dotfiles {
             if self.verbose {
                 println!(
                     "  {} {} → {}",
                     "Linking:".bright_black(),
-                    source.display(),
-                    target.display()
+                    dotfile.source,
+                    dotfile.target
                 );
             }
 
-            match create_symlink_with_resolution(&source, &target, &mut state, &mut apply_to_all) {
+            match apply_dotfile(dotfile, &config, &host_ctx, &mut state, &mut apply_to_all) {
                 Ok(()) => {
-                    println!("  {} {}", "✓".green(), target.display());
+                    println!("  {} {}", "✓".green(), dotfile.target);
                 }
                 Err(e) => {
-                    eprintln!("  {} {} - {}", "✗".red(), target.display(), e);
+                    eprintln!("  {} {} - {}", "✗".red(), dotfile.target, e);
                     if !self.yes {
                         use dialoguer::Confirm;
                         let continue_on_error = Confirm::new()
@@ -672,6 +690,33 @@ impl Cli {
                     );
                 }
             }
+
+            if let Some(rendered_path_str) = &dotfile.rendered_path {
+                let rendered_path = PathBuf::from(rendered_path_str);
+                if rendered_path.exists() {
+                    match std::fs::remove_file(&rendered_path) {
+                        Ok(()) => {
+                            if self.verbose {
+                                println!(
+                                    "  {} Cleaned up rendered file: {}",
+                                    "✓".green(),
+                                    rendered_path.display()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            if self.verbose {
+                                eprintln!(
+                                    "  {} Failed to clean up rendered file {}: {}",
+                                    "⚠".yellow(),
+                                    rendered_path.display(),
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         let mut new_state = State::new();
@@ -701,6 +746,56 @@ impl Cli {
             );
         }
 
+        Ok(())
+    }
+
+    fn run_render(&self, template: &str) -> anyhow::Result<()> {
+        use crate::template::render_file;
+
+        let config_path = self.find_config()?;
+
+        if self.verbose {
+            println!(
+                "{} {}",
+                "Loading config:".bright_black(),
+                config_path.display()
+            );
+        }
+
+        let base_config = Config::from_file(&config_path)?;
+
+        let host_name = if let Some(host) = &self.host {
+            host.clone()
+        } else {
+            Self::detect_hostname()
+        };
+
+        let merged_config = if !base_config.hosts.is_empty() {
+            if self.verbose {
+                println!("{} {}", "Using host:".bright_black(), host_name);
+            }
+            base_config.with_host(&host_name)?
+        } else {
+            base_config
+        };
+
+        let host_ctx = if !merged_config.hosts.is_empty() {
+            let host_config = merged_config.hosts.get(&host_name).unwrap();
+            HostContext {
+                name: host_name.clone(),
+                roles: host_config.roles.clone(),
+            }
+        } else {
+            HostContext {
+                name: "default".to_string(),
+                roles: vec![],
+            }
+        };
+
+        let template_path = PathBuf::from(template);
+        let rendered = render_file(&template_path, &merged_config.variables, &host_ctx)?;
+
+        println!("{}", rendered);
         Ok(())
     }
 }

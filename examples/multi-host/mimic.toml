@@ -16,6 +16,12 @@ target = "~/.gitconfig"
 source = "dotfiles/vimrc"
 target = "~/.vimrc"
 
+# Shared template - generates fish config per host
+[[dotfiles]]
+source = "templates/fish-config.fish.tmpl"
+target = "~/.config/fish/config.fish"
+template = true
+
 # Shared packages (installed on all hosts)
 [[packages.homebrew]]
 name = "git"
@@ -94,6 +100,7 @@ roles = ["personal", "linux", "desktop", "powerful"]
 [hosts.home-desktop.variables]
 email = "user@personal.com"
 display_scale = "1.5"
+openai_model = "gpt-5-nano"
 
 [[hosts.home-desktop.dotfiles]]
 source = "dotfiles/personal-bashrc"
@@ -122,3 +129,4 @@ type = "formula"
 [[hosts.home-server.packages.homebrew]]
 name = "tmux"
 type = "formula"
+

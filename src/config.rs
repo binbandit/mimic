@@ -40,6 +40,15 @@ pub struct HostConfig {
 pub struct Dotfile {
     pub source: String,
     pub target: String,
+    #[serde(default)]
+    pub template: bool,
+}
+
+impl Dotfile {
+    /// Check if this dotfile should be treated as a template
+    pub fn is_template(&self) -> bool {
+        self.template || self.source.ends_with(".tmpl") || self.source.ends_with(".hbs")
+    }
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]

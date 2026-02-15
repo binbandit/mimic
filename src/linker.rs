@@ -1,7 +1,10 @@
+use crate::config::{Config, Dotfile};
 use crate::error::LinkError;
 use crate::state::{DotfileState, State};
+use crate::template::{render_file, HostContext};
 use anyhow::Context;
 use chrono::Local;
+use colored::Colorize;
 use dialoguer::Select;
 use std::fs;
 use std::os::unix::fs::symlink;
@@ -202,6 +205,7 @@ pub fn create_symlink_with_resolution(
         source: expanded_source.to_string_lossy().to_string(),
         target: expanded_target.to_string_lossy().to_string(),
         backup_path: backup_path_str,
+        rendered_path: None,
     });
 
     Ok(())
@@ -216,4 +220,128 @@ fn expand_path(path: &Path) -> anyhow::Result<std::path::PathBuf> {
         .with_context(|| format!("Failed to expand path: {}", path_str))?;
 
     Ok(std::path::PathBuf::from(expanded.as_ref()))
+}
+
+pub fn apply_dotfile(
+    dotfile: &Dotfile,
+    config: &Config,
+    host_context: &HostContext,
+    state: &mut State,
+    apply_to_all: &mut Option<ApplyToAllChoice>,
+) -> anyhow::Result<()> {
+    if dotfile.is_template() {
+        apply_template_dotfile(dotfile, config, host_context, state, apply_to_all)
+    } else {
+        apply_regular_dotfile(dotfile, state, apply_to_all)
+    }
+}
+
+fn apply_regular_dotfile(
+    dotfile: &Dotfile,
+    state: &mut State,
+    apply_to_all: &mut Option<ApplyToAllChoice>,
+) -> anyhow::Result<()> {
+    let source = PathBuf::from(&dotfile.source);
+    let target = PathBuf::from(&dotfile.target);
+    create_symlink_with_resolution(&source, &target, state, apply_to_all)
+}
+
+fn apply_template_dotfile(
+    dotfile: &Dotfile,
+    config: &Config,
+    host_context: &HostContext,
+    state: &mut State,
+    apply_to_all: &mut Option<ApplyToAllChoice>,
+) -> anyhow::Result<()> {
+    let source = expand_path(&PathBuf::from(&dotfile.source))?;
+    let target = expand_path(&PathBuf::from(&dotfile.target))?;
+
+    let rendered = render_file(&source, &config.variables, host_context)?;
+
+    let rendered_dir = directories::BaseDirs::new()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+        .home_dir()
+        .join(".mimic/rendered");
+
+    std::fs::create_dir_all(&rendered_dir)?;
+
+    let filename = source
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .trim_end_matches(".tmpl")
+        .trim_end_matches(".hbs");
+    let temp_path = rendered_dir.join(filename);
+
+    std::fs::write(&temp_path, rendered)?;
+
+    println!("  {} Rendered: {}", "→".bright_black(), temp_path.display());
+
+    let mut backup_path_str = None;
+
+    if target.exists() {
+        let resolution = resolve_conflict(&target, &temp_path, apply_to_all)?;
+
+        match resolution {
+            ConflictResolution::Skip => {
+                return Ok(());
+            }
+            ConflictResolution::Overwrite => {
+                fs::remove_file(&target).with_context(|| {
+                    format!("Failed to remove existing file: {}", target.display())
+                })?;
+            }
+            ConflictResolution::Backup => {
+                let backup_path = backup_file(&target)?;
+                backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                fs::remove_file(&target).with_context(|| {
+                    format!(
+                        "Failed to remove original file after backup: {}",
+                        target.display()
+                    )
+                })?;
+            }
+            ConflictResolution::ApplyToAll(choice) => match choice {
+                ApplyToAllChoice::Skip => {
+                    return Ok(());
+                }
+                ApplyToAllChoice::Overwrite => {
+                    fs::remove_file(&target).with_context(|| {
+                        format!("Failed to remove existing file: {}", target.display())
+                    })?;
+                }
+                ApplyToAllChoice::Backup => {
+                    let backup_path = backup_file(&target)?;
+                    backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                    fs::remove_file(&target).with_context(|| {
+                        format!(
+                            "Failed to remove original file after backup: {}",
+                            target.display()
+                        )
+                    })?;
+                }
+            },
+        }
+    }
+
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
+    }
+
+    symlink(&temp_path, &target).with_context(|| LinkError::SymlinkFailed {
+        from: temp_path.display().to_string(),
+        to: target.display().to_string(),
+        reason: "symlink system call failed".to_string(),
+    })?;
+
+    state.add_dotfile(DotfileState {
+        source: source.to_string_lossy().to_string(),
+        target: target.to_string_lossy().to_string(),
+        backup_path: backup_path_str,
+        rendered_path: Some(temp_path.to_string_lossy().to_string()),
+    });
+
+    Ok(())
 }

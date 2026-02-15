@@ -1,47 +1,64 @@
-use anyhow::Result;
-use handlebars::Handlebars;
+use anyhow::{Context, Result};
+use handlebars::{handlebars_helper, Handlebars};
+use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::Path;
+
+handlebars_helper!(includes: |array: Vec<Value>, value: Value| {
+    array.iter().any(|v| v == &value)
+});
+
+#[derive(Debug, Clone)]
+pub struct HostContext {
+    pub name: String,
+    pub roles: Vec<String>,
+}
 
 pub fn render_template(template: &str, variables: &HashMap<String, String>) -> Result<String> {
+    let host_context = HostContext {
+        name: "default".to_string(),
+        roles: vec![],
+    };
+    render_template_with_host(template, variables, &host_context)
+}
+
+pub fn render_template_with_host(
+    template: &str,
+    variables: &HashMap<String, String>,
+    host_context: &HostContext,
+) -> Result<String> {
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
 
-    let mut context = get_system_variables();
+    handlebars.register_helper("includes", Box::new(includes));
 
-    for (key, value) in variables {
-        context.insert(key.clone(), value.clone());
-    }
+    let context = json!({
+        "variables": variables,
+        "host": {
+            "name": host_context.name,
+            "roles": host_context.roles,
+        },
+        "system": {
+            "hostname": whoami::hostname().unwrap_or_else(|_| "unknown".to_string()),
+            "username": whoami::username().unwrap_or_else(|_| "unknown".to_string()),
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        },
+    });
 
-    handlebars.render_template(template, &context).map_err(|e| {
-        anyhow::anyhow!(
-            "Variable '{}' not found in context",
-            extract_variable_name(&e.to_string())
-        )
-    })
+    handlebars
+        .render_template(template, &context)
+        .map_err(|e| anyhow::anyhow!("Template rendering failed: {}", e))
 }
 
-fn get_system_variables() -> HashMap<String, String> {
-    let mut vars = HashMap::new();
+pub fn render_file(
+    source_path: &Path,
+    variables: &HashMap<String, String>,
+    host_context: &HostContext,
+) -> Result<String> {
+    let content = std::fs::read_to_string(source_path)
+        .with_context(|| format!("Failed to read template: {}", source_path.display()))?;
 
-    vars.insert(
-        "hostname".to_string(),
-        whoami::hostname().unwrap_or_else(|_| "unknown".to_string()),
-    );
-    vars.insert(
-        "username".to_string(),
-        whoami::username().unwrap_or_else(|_| "unknown".to_string()),
-    );
-    vars.insert("os".to_string(), std::env::consts::OS.to_string());
-    vars.insert("arch".to_string(), std::env::consts::ARCH.to_string());
-
-    vars
-}
-
-fn extract_variable_name(error_msg: &str) -> &str {
-    if let Some(start) = error_msg.find('"') {
-        if let Some(end) = error_msg[start + 1..].find('"') {
-            return &error_msg[start + 1..start + 1 + end];
-        }
-    }
-    "unknown"
+    render_template_with_host(&content, variables, host_context)
+        .with_context(|| format!("Template rendering failed for: {}", source_path.display()))
 }

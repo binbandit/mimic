@@ -16,6 +16,7 @@ fn test_state_persistence() {
         source: "~/.vimrc".to_string(),
         target: "/home/user/.vimrc".to_string(),
         backup_path: Some("/home/user/.vimrc.backup".to_string()),
+        rendered_path: None,
     });
     state.add_package(PackageState {
         name: "git".to_string(),
@@ -61,6 +62,7 @@ fn test_state_add_remove_dotfile() {
         source: "~/.bashrc".to_string(),
         target: "/home/user/.bashrc".to_string(),
         backup_path: None,
+        rendered_path: None,
     });
 
     assert_eq!(state.dotfiles.len(), 1);
@@ -79,6 +81,7 @@ fn test_state_clear() {
         source: "~/.zshrc".to_string(),
         target: "/home/user/.zshrc".to_string(),
         backup_path: None,
+        rendered_path: None,
     });
 
     // Clear should reset everything
@@ -124,6 +127,7 @@ fn test_state_multiple_dotfiles() {
             source: format!("~/.config/file{}", i),
             target: format!("/home/user/.config/file{}", i),
             backup_path: None,
+            rendered_path: None,
         });
     }
 

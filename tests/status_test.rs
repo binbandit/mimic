@@ -12,12 +12,14 @@ fn create_test_state(state_path: &PathBuf) -> anyhow::Result<State> {
         source: "/tmp/test_source1".to_string(),
         target: "/tmp/test_target1".to_string(),
         backup_path: None,
+        rendered_path: None,
     });
 
     state.add_dotfile(DotfileState {
         source: "/tmp/test_source2".to_string(),
         target: "/tmp/test_target2".to_string(),
         backup_path: None,
+        rendered_path: None,
     });
 
     state.add_package(PackageState {
@@ -49,6 +51,7 @@ fn test_status_detects_broken_symlink() -> anyhow::Result<()> {
         source: source.to_string_lossy().to_string(),
         target: target.to_string_lossy().to_string(),
         backup_path: None,
+        rendered_path: None,
     });
     state.save(&state_path)?;
 
@@ -89,6 +92,7 @@ fn test_status_detects_wrong_symlink_target() -> anyhow::Result<()> {
         source: source.to_string_lossy().to_string(),
         target: target.to_string_lossy().to_string(),
         backup_path: None,
+        rendered_path: None,
     });
     state.save(&state_path)?;
 
@@ -129,6 +133,7 @@ fn test_status_detects_all_in_sync() -> anyhow::Result<()> {
         source: source.to_string_lossy().to_string(),
         target: target.to_string_lossy().to_string(),
         backup_path: None,
+        rendered_path: None,
     });
     state.save(&state_path)?;
 

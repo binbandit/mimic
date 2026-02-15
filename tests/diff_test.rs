@@ -18,6 +18,7 @@ fn test_diff_detects_new_dotfile() {
     let dotfile = Dotfile {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
+        template: false,
     };
 
     let config = Config {
@@ -54,6 +55,7 @@ fn test_diff_symlink_already_correct() {
     let dotfile = Dotfile {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
+        template: false,
     };
 
     let config = Config {
@@ -91,6 +93,7 @@ fn test_diff_wrong_symlink_target() {
     let dotfile = Dotfile {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
+        template: false,
     };
 
     let config = Config {
@@ -126,6 +129,7 @@ fn test_diff_target_is_regular_file() {
     let dotfile = Dotfile {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
+        template: false,
     };
 
     let config = Config {
@@ -197,10 +201,12 @@ fn test_diff_multiple_changes() {
             Dotfile {
                 source: source1.to_str().unwrap().to_string(),
                 target: target1.to_str().unwrap().to_string(),
+                template: false,
             },
             Dotfile {
                 source: source2.to_str().unwrap().to_string(),
                 target: target2.to_str().unwrap().to_string(),
+                template: false,
             },
         ],
         packages: Packages::default(),
@@ -237,6 +243,7 @@ fn test_diff_pretty_format() {
     let dotfile = Dotfile {
         source: source.to_str().unwrap().to_string(),
         target: target.to_str().unwrap().to_string(),
+        template: false,
     };
 
     let config = Config {

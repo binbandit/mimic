@@ -9,6 +9,8 @@ pub struct DotfileState {
     pub source: String,
     pub target: String,
     pub backup_path: Option<String>,
+    #[serde(default)]
+    pub rendered_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +131,7 @@ mod tests {
             source: "test".to_string(),
             target: "test_target".to_string(),
             backup_path: None,
+            rendered_path: None,
         });
 
         state.add_package(PackageState {
