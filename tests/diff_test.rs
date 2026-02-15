@@ -26,6 +26,7 @@ fn test_diff_detects_new_dotfile() {
         dotfiles: vec![dotfile],
         packages: Packages::default(),
         hosts: HashMap::new(),
+        hooks: vec![],
     };
 
     let engine = DiffEngine::new();
@@ -63,6 +64,7 @@ fn test_diff_symlink_already_correct() {
         dotfiles: vec![dotfile],
         packages: Packages::default(),
         hosts: HashMap::new(),
+        hooks: vec![],
     };
 
     let engine = DiffEngine::new();
@@ -101,6 +103,7 @@ fn test_diff_wrong_symlink_target() {
         dotfiles: vec![dotfile],
         packages: Packages::default(),
         hosts: HashMap::new(),
+        hooks: vec![],
     };
 
     let engine = DiffEngine::new();
@@ -137,6 +140,7 @@ fn test_diff_target_is_regular_file() {
         dotfiles: vec![dotfile],
         packages: Packages::default(),
         hosts: HashMap::new(),
+        hooks: vec![],
     };
 
     let engine = DiffEngine::new();
@@ -166,6 +170,7 @@ fn test_diff_package_not_installed() {
             homebrew: vec![package],
         },
         hosts: HashMap::new(),
+        hooks: vec![],
     };
 
     let homebrew = HomebrewManager::new();
@@ -211,6 +216,7 @@ fn test_diff_multiple_changes() {
         ],
         packages: Packages::default(),
         hosts: HashMap::new(),
+        hooks: vec![],
     };
 
     let engine = DiffEngine::new();
@@ -251,6 +257,7 @@ fn test_diff_pretty_format() {
         dotfiles: vec![dotfile],
         packages: Packages::default(),
         hosts: HashMap::new(),
+        hooks: vec![],
     };
 
     let engine = DiffEngine::new();

@@ -1,0 +1,61 @@
+# Example configuration with activation hooks
+
+[variables]
+email = "user@example.com"
+editor = "nvim"
+
+# Global hooks (run for all hosts)
+[[hooks]]
+type = "rustup"
+toolchains = ["stable", "nightly"]
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]
+targets = ["x86_64-unknown-linux-musl"]
+default = "nightly"
+
+[[hooks]]
+type = "mise"
+
+[[hooks]]
+type = "command"
+name = "setup-environment"
+command = "echo 'Setting up development environment...'"
+on_failure = "continue"
+
+# Personal host configuration
+[hosts.personal]
+roles = ["personal", "development"]
+
+[hosts.personal.variables]
+email = "personal@example.com"
+
+[[hosts.personal.hooks]]
+type = "pnpm-global"
+packages = ["typescript", "@biomejs/biome"]
+
+[[hosts.personal.hooks]]
+type = "cargo-install"
+packages = [
+    { name = "tap", git = "https://github.com/crazywolf132/tap.git" },
+    { name = "sg", git = "https://github.com/sage-scm/sage.git", bin = "sg" },
+]
+
+[[hosts.personal.hooks]]
+type = "uv-python"
+version = "3.12"
+
+[hosts.personal.hooks.symlinks]
+python = "~/.local/bin/python"
+python3 = "~/.local/bin/python3"
+
+# Work host configuration
+[hosts.work]
+roles = ["work", "corporate"]
+
+[hosts.work.variables]
+email = "work@corp.com"
+
+[[hosts.work.hooks]]
+type = "command"
+name = "setup-vpn"
+command = "echo 'Configuring corporate VPN...'"
+on_failure = "fail"

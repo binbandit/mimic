@@ -54,6 +54,7 @@ fn test_host_merge() {
             variables: host_vars,
             dotfiles: vec![],
             packages: Packages::default(),
+            hooks: vec![],
         },
     );
 
@@ -62,6 +63,7 @@ fn test_host_merge() {
         dotfiles: vec![],
         packages: Packages::default(),
         hosts,
+        hooks: vec![],
     };
 
     let merged = config.with_host("personal").unwrap();
@@ -81,6 +83,7 @@ fn test_host_not_found() {
         dotfiles: vec![],
         packages: Packages::default(),
         hosts: HashMap::new(),
+        hooks: vec![],
     };
 
     let result = config.with_host("nonexistent");

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::config::Config;
 use crate::diff::{Change, DiffEngine};
+use crate::hooks;
 use crate::installer::HomebrewManager;
 use crate::linker::{apply_dotfile, ApplyToAllChoice};
 use crate::state::State;
@@ -372,6 +373,34 @@ impl Cli {
                         use dialoguer::Confirm;
                         let continue_on_error = Confirm::new()
                             .with_prompt("Continue with remaining packages?")
+                            .default(true)
+                            .interact()?;
+
+                        if !continue_on_error {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !config.hooks.is_empty() {
+            println!();
+            println!("{}", "Running activation hooks...".bright_cyan().bold());
+
+            match hooks::execute_hooks(&config.hooks, self.verbose) {
+                Ok(()) => {
+                    println!();
+                    println!("{}", "✓ All hooks completed successfully".green());
+                    state.hooks = config.hooks.clone();
+                }
+                Err(e) => {
+                    eprintln!();
+                    eprintln!("{} Hook execution failed: {}", "✗".red(), e);
+                    if !self.yes {
+                        use dialoguer::Confirm;
+                        let continue_on_error = Confirm::new()
+                            .with_prompt("Continue with saving state?")
                             .default(true)
                             .interact()?;
 

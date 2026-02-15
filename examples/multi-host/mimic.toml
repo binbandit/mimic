@@ -31,6 +31,23 @@ type = "formula"
 name = "curl"
 type = "formula"
 
+# Activation hooks (run after dotfiles and packages applied)
+[[hooks]]
+type = "rustup"
+toolchains = ["stable", "nightly"]
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]
+targets = ["x86_64-unknown-linux-musl"]
+default = "nightly"
+
+[[hooks]]
+type = "mise"
+
+[[hooks]]
+type = "command"
+name = "setup-dev-tools"
+command = "echo 'Dev environment ready'"
+on_failure = "continue"
+
 # Personal laptop configuration
 [hosts.personal-macbook]
 roles = ["personal", "mac", "portable"]
@@ -59,6 +76,17 @@ type = "cask"
 [[hosts.personal-macbook.packages.homebrew]]
 name = "discord"
 type = "cask"
+
+[[hosts.personal-macbook.hooks]]
+type = "pnpm-global"
+packages = ["typescript", "@biomejs/biome"]
+
+[[hosts.personal-macbook.hooks]]
+type = "cargo-install"
+packages = [
+    { name = "tap", git = "https://github.com/crazywolf132/tap.git" },
+    { name = "sg", git = "https://github.com/sage-scm/sage.git", bin = "sg" },
+]
 
 # Work laptop configuration
 [hosts.work-macbook]

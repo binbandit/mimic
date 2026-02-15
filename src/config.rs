@@ -1,3 +1,4 @@
+use crate::hooks::Hook;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -16,6 +17,9 @@ pub struct Config {
 
     #[serde(default)]
     pub hosts: HashMap<String, HostConfig>,
+
+    #[serde(default)]
+    pub hooks: Vec<Hook>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -34,6 +38,9 @@ pub struct HostConfig {
 
     #[serde(default)]
     pub packages: Packages,
+
+    #[serde(default)]
+    pub hooks: Vec<Hook>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -99,11 +106,15 @@ impl Config {
             .homebrew
             .extend(host.packages.homebrew.clone());
 
+        let mut merged_hooks = self.hooks.clone();
+        merged_hooks.extend(host.hooks.clone());
+
         Ok(Config {
             variables: merged_vars,
             dotfiles: merged_dotfiles,
             packages: merged_packages,
-            hosts: self.hosts.clone(), // Preserve for later use
+            hosts: self.hosts.clone(),
+            hooks: merged_hooks,
         })
     }
 

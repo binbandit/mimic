@@ -1,3 +1,4 @@
+use crate::hooks::Hook;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -26,6 +27,8 @@ pub struct State {
     pub applied_at: DateTime<Utc>,
     pub dotfiles: Vec<DotfileState>,
     pub packages: Vec<PackageState>,
+    #[serde(default)]
+    pub hooks: Vec<Hook>,
 }
 
 impl State {
@@ -37,6 +40,7 @@ impl State {
             applied_at: Utc::now(),
             dotfiles: Vec::new(),
             packages: Vec::new(),
+            hooks: Vec::new(),
         }
     }
 
@@ -101,6 +105,7 @@ impl State {
         self.applied_commit = None;
         self.dotfiles.clear();
         self.packages.clear();
+        self.hooks.clear();
         self.applied_at = Utc::now();
     }
 }
