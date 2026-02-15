@@ -1,7 +1,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 /// Test first-time setup scenario:
@@ -734,7 +733,6 @@ target = "{}"
     assert!(target_in_temp.is_symlink());
 }
 
-
 /// Test error reporting for nonexistent source file
 #[test]
 fn test_error_reporting_nonexistent_source() {
@@ -870,16 +868,109 @@ target = "{}"
         .assert()
         .success();
 
-    assert!(
-        state_path.exists(),
-        "State file should be created"
-    );
+    assert!(state_path.exists(), "State file should be created");
 
     let state_content = fs::read_to_string(&state_path).unwrap();
     assert!(
         state_content.contains("target.conf"),
         "State should include successful operations"
     );
+}
+
+/// Test that relative source paths in config are resolved relative to config file directory,
+/// not the current working directory. This ensures `mimic apply --config /some/dir/mimic.toml`
+/// works correctly even when run from a different directory.
+#[test]
+fn test_relative_source_paths_resolved_from_config_dir() {
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Create a config directory with source files nested inside
+    let config_dir = temp_path.join("my-dotfiles");
+    let source_dir = config_dir.join("dotfiles");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(source_dir.join("test.conf"), "test content").unwrap();
+
+    // Create config file using RELATIVE source path
+    let config_path = config_dir.join("mimic.toml");
+    let target_path = temp_path.join("target.conf");
+    let state_path = temp_path.join("state.toml");
+
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[[dotfiles]]
+source = "dotfiles/test.conf"
+target = "{}"
+"#,
+            target_path.display()
+        ),
+    )
+    .unwrap();
+
+    // Run apply from a completely different working directory (temp_path, NOT config_dir)
+    // This would have failed before the fix because "dotfiles/test.conf" would resolve
+    // against CWD instead of the config file's directory.
+    Command::cargo_bin("mimic")
+        .unwrap()
+        .arg("apply")
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--state")
+        .arg(&state_path)
+        .arg("--yes")
+        .current_dir(temp_path) // Explicitly set CWD to a different directory
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("✓"));
+
+    // Verify symlink created and points to the correct source
+    assert!(target_path.is_symlink());
+    let link_target = fs::read_link(&target_path).unwrap();
+    assert_eq!(
+        link_target.canonicalize().unwrap(),
+        source_dir.join("test.conf").canonicalize().unwrap()
+    );
+}
+
+/// Test that diff works correctly with relative source paths when run from a different directory
+#[test]
+fn test_diff_with_relative_source_paths() {
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    let config_dir = temp_path.join("my-dotfiles");
+    let source_dir = config_dir.join("dotfiles");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(source_dir.join("test.conf"), "test content").unwrap();
+
+    let config_path = config_dir.join("mimic.toml");
+    let target_path = temp_path.join("target.conf");
+
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[[dotfiles]]
+source = "dotfiles/test.conf"
+target = "{}"
+"#,
+            target_path.display()
+        ),
+    )
+    .unwrap();
+
+    // Run diff from a different directory
+    Command::cargo_bin("mimic")
+        .unwrap()
+        .arg("diff")
+        .arg("--config")
+        .arg(&config_path)
+        .current_dir(temp_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("target.conf"));
 }
 
 /// Test error handling with conflicting files and --yes flag
@@ -923,7 +1014,10 @@ target = "{}"
         .assert()
         .success();
 
-    assert!(target.is_symlink(), "Conflict should be resolved via backup");
+    assert!(
+        target.is_symlink(),
+        "Conflict should be resolved via backup"
+    );
 
     let backup_pattern = format!("{}.backup.*", target.display());
     let backup_files: Vec<_> = glob::glob(&backup_pattern)

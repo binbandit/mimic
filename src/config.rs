@@ -199,7 +199,39 @@ impl Config {
                 path_ref.display()
             )
         })?;
-        Self::from_str(&content)
+        let mut config = Self::from_str(&content)?;
+
+        // Resolve relative source paths against the config file's directory
+        if let Some(config_dir) = path_ref.parent() {
+            // Canonicalize the config dir so relative paths become fully absolute
+            let config_dir = config_dir.canonicalize().unwrap_or_else(|_| config_dir.to_path_buf());
+            config.resolve_source_paths(&config_dir);
+        }
+
+        Ok(config)
+    }
+
+    /// Resolve all relative dotfile source paths against the given base directory.
+    /// This ensures source paths work regardless of the current working directory.
+    pub fn resolve_source_paths(&mut self, base_dir: &Path) {
+        for dotfile in &mut self.dotfiles {
+            dotfile.source = Self::resolve_relative_path(&dotfile.source, base_dir);
+        }
+        for host_config in self.hosts.values_mut() {
+            for dotfile in &mut host_config.dotfiles {
+                dotfile.source = Self::resolve_relative_path(&dotfile.source, base_dir);
+            }
+        }
+    }
+
+    /// If a path is relative (doesn't start with `/` or `~` or `$`), join it with the base directory.
+    fn resolve_relative_path(path: &str, base_dir: &Path) -> String {
+        let p = Path::new(path);
+        if p.is_absolute() || path.starts_with('~') || path.starts_with('$') {
+            path.to_string()
+        } else {
+            base_dir.join(p).to_string_lossy().to_string()
+        }
     }
 
     /// Merge the base config with a specific host configuration
