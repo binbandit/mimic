@@ -29,7 +29,9 @@ impl MiseConfig {
             }
         }
 
-        lines.join("\n")
+        let mut output = lines.join("\n");
+        output.push('\n');
+        output
     }
 
     pub fn write_to_file(&self, path: &PathBuf) -> Result<()> {
