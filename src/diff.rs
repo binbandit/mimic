@@ -1,8 +1,9 @@
-use crate::config::Config;
+use crate::config::{Config, Dotfile};
+use crate::expand::expand_path_str;
 use crate::installer::HomebrewManager;
 use colored::Colorize;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
@@ -85,7 +86,7 @@ impl DiffEngine {
         let mut changes = Vec::new();
 
         for dotfile in &config.dotfiles {
-            let change = self.diff_dotfile(&dotfile.source, &dotfile.target)?;
+            let change = self.diff_dotfile(dotfile)?;
             changes.push(change);
         }
 
@@ -98,9 +99,9 @@ impl DiffEngine {
         Ok(changes)
     }
 
-    fn diff_dotfile(&self, source: &str, target: &str) -> anyhow::Result<Change> {
-        let expanded_source = expand_path(source)?;
-        let expanded_target = expand_path(target)?;
+    fn diff_dotfile(&self, dotfile: &Dotfile) -> anyhow::Result<Change> {
+        let expanded_source = expand_path(&dotfile.source)?;
+        let expanded_target = expand_path(&dotfile.target)?;
 
         if !expanded_source.exists() {
             return Err(anyhow::anyhow!(
@@ -132,7 +133,15 @@ impl DiffEngine {
 
         let current_link_target = fs::read_link(&expanded_target)?;
 
-        let canonical_source = fs::canonicalize(&expanded_source)?;
+        // For template dotfiles, the symlink should point to the rendered file
+        // in ~/.mimic/rendered/, not the original source template.
+        let expected_path = if dotfile.is_template() {
+            self.get_rendered_path(&expanded_source)?
+        } else {
+            expanded_source.clone()
+        };
+
+        let canonical_expected = fs::canonicalize(&expected_path)?;
         let canonical_current = if current_link_target.is_absolute() {
             fs::canonicalize(&current_link_target).unwrap_or(current_link_target.clone())
         } else {
@@ -141,7 +150,7 @@ impl DiffEngine {
             fs::canonicalize(&absolute_target).unwrap_or(current_link_target.clone())
         };
 
-        if canonical_source == canonical_current {
+        if canonical_expected == canonical_current {
             Ok(Change::AlreadyCorrect {
                 description: format!("{}", expanded_target.display()),
             })
@@ -152,6 +161,24 @@ impl DiffEngine {
                 reason: format!("points to wrong target: {}", current_link_target.display()),
             })
         }
+    }
+
+    /// Compute the rendered path for a template dotfile, matching the logic in linker.rs.
+    fn get_rendered_path(&self, source: &Path) -> anyhow::Result<PathBuf> {
+        let rendered_dir = directories::BaseDirs::new()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+            .home_dir()
+            .join(".mimic/rendered");
+
+        let filename = source
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("Source path has no filename: {}", source.display()))?
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Filename contains invalid UTF-8"))?
+            .trim_end_matches(".tmpl")
+            .trim_end_matches(".hbs");
+
+        Ok(rendered_dir.join(filename))
     }
 
     fn diff_package(&self, name: &str) -> anyhow::Result<Change> {
@@ -177,9 +204,7 @@ impl Default for DiffEngine {
 }
 
 fn expand_path(path: &str) -> anyhow::Result<std::path::PathBuf> {
-    let expanded = shellexpand::full(path)
-        .map_err(|e| anyhow::anyhow!("Failed to expand path '{}': {}", path, e))?;
-    Ok(std::path::PathBuf::from(expanded.as_ref()))
+    expand_path_str(path)
 }
 
 #[cfg(test)]
