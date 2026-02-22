@@ -291,35 +291,54 @@ impl Cli {
         }
     }
 
-    fn run_diff(&self) -> anyhow::Result<()> {
-        let (config, host_name) = self.resolve_config_and_host()?;
-
-        let host_roles = if let Some(ref host_name) = host_name {
+    /// Get the roles for the resolved host.
+    fn get_host_roles(config: &Config, host_name: &Option<String>) -> Vec<String> {
+        if let Some(name) = host_name {
             config
                 .hosts
-                .get(host_name)
+                .get(name)
                 .map(|h| h.roles.clone())
                 .unwrap_or_default()
         } else {
             vec![]
-        };
+        }
+    }
 
+    /// Build a HostContext from the resolved host, with safe fallback.
+    fn build_host_context(config: &Config, host_name: &Option<String>) -> HostContext {
+        if let Some(name) = host_name {
+            if let Some(host_config) = config.hosts.get(name) {
+                return HostContext {
+                    name: name.clone(),
+                    roles: host_config.roles.clone(),
+                };
+            }
+        }
+        HostContext {
+            name: host_name.as_deref().unwrap_or("default").to_string(),
+            roles: vec![],
+        }
+    }
+
+    /// Filter a config by roles, returning only dotfiles and packages that apply.
+    fn filter_config_by_roles(config: Config, host_roles: &[String]) -> Config {
         let filtered_dotfiles: Vec<_> = config
             .dotfiles
             .iter()
-            .filter(|df| should_apply_for_roles(&df.only_roles, &df.skip_roles, &host_roles))
+            .filter(|df| should_apply_for_roles(&df.only_roles, &df.skip_roles, host_roles))
             .cloned()
             .collect();
 
-        let filtered_packages: Vec<_> = config
-            .packages
+        // Normalize first so brew/cask shorthand lists are included
+        let normalized = config.packages.normalized();
+        let filtered_packages: Vec<_> = normalized
             .homebrew
             .iter()
-            .filter(|pkg| should_apply_for_roles(&pkg.only_roles, &pkg.skip_roles, &host_roles))
+            .filter(|pkg| should_apply_for_roles(&pkg.only_roles, &pkg.skip_roles, host_roles))
             .cloned()
             .collect();
 
-        let filtered_config = Config {
+        Config {
             variables: config.variables,
             dotfiles: filtered_dotfiles,
             packages: crate::config::Packages {
@@ -331,7 +350,13 @@ impl Cli {
             hooks: config.hooks,
             secrets: config.secrets,
             mise: config.mise,
-        };
+        }
+    }
+
+    fn run_diff(&self) -> anyhow::Result<()> {
+        let (config, host_name) = self.resolve_config_and_host()?;
+        let host_roles = Self::get_host_roles(&config, &host_name);
+        let filtered_config = Self::filter_config_by_roles(config, &host_roles);
 
         let diff_engine = DiffEngine::new();
         let changes = diff_engine.diff(&filtered_config)?;
@@ -370,9 +395,14 @@ impl Cli {
 
     fn run_apply(&self) -> anyhow::Result<()> {
         let (config, host_name) = self.resolve_config_and_host()?;
+        let host_ctx = Self::build_host_context(&config, &host_name);
+
+        // Filter config by roles for diff preview (must match what we actually apply)
+        let host_roles = Self::get_host_roles(&config, &host_name);
+        let filtered_for_diff = Self::filter_config_by_roles(config.clone(), &host_roles);
 
         let diff_engine = DiffEngine::new();
-        let changes = diff_engine.diff(&config)?;
+        let changes = diff_engine.diff(&filtered_for_diff)?;
 
         if changes.is_empty() {
             println!("{}", "No changes to apply.".bright_black());
@@ -416,19 +446,6 @@ impl Cli {
             Some(ApplyToAllChoice::Backup)
         } else {
             None
-        };
-
-        let host_ctx = if let Some(ref host_name) = host_name {
-            let host_config = config.hosts.get(host_name).unwrap();
-            HostContext {
-                name: host_name.clone(),
-                roles: host_config.roles.clone(),
-            }
-        } else {
-            HostContext {
-                name: "default".to_string(),
-                roles: vec![],
-            }
         };
 
         for dotfile in &config.dotfiles {
