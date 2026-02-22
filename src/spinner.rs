@@ -140,8 +140,13 @@ fn should_show_spinner() -> bool {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
+
+    /// Mutex to serialize tests that read/write the CI environment variable,
+    /// preventing races when tests run in parallel.
+    static CI_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_spinner_creation() {
@@ -157,6 +162,7 @@ mod tests {
 
     #[test]
     fn test_should_show_spinner_in_ci() {
+        let _lock = CI_ENV_LOCK.lock().unwrap();
         let original = std::env::var("CI").ok();
 
         unsafe {
@@ -177,6 +183,7 @@ mod tests {
 
     #[test]
     fn test_should_show_spinner_not_in_ci() {
+        let _lock = CI_ENV_LOCK.lock().unwrap();
         let original = std::env::var("CI").ok();
 
         unsafe {
@@ -243,25 +250,35 @@ mod tests {
 
     #[test]
     fn test_spinner_in_ci_is_none() {
+        let _lock = CI_ENV_LOCK.lock().unwrap();
+        let original = std::env::var("CI").ok();
         unsafe {
             env::set_var("CI", "true");
         }
         let spinner = Spinner::new("CI test");
         assert!(spinner.pb.is_none(), "ProgressBar should be None in CI");
         unsafe {
-            env::remove_var("CI");
+            match original {
+                Some(val) => env::set_var("CI", val),
+                None => env::remove_var("CI"),
+            }
         }
     }
 
     #[test]
     fn test_spinner_manager_in_ci_is_none() {
+        let _lock = CI_ENV_LOCK.lock().unwrap();
+        let original = std::env::var("CI").ok();
         unsafe {
             env::set_var("CI", "true");
         }
         let manager = SpinnerManager::new();
         assert!(manager.mp.is_none(), "MultiProgress should be None in CI");
         unsafe {
-            env::remove_var("CI");
+            match original {
+                Some(val) => env::set_var("CI", val),
+                None => env::remove_var("CI"),
+            }
         }
     }
 

@@ -133,7 +133,7 @@ fn test_state_integration() {
 }
 
 #[test]
-fn test_symlink_to_existing_symlink_fails() {
+fn test_symlink_to_existing_symlink_is_idempotent() {
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("source.txt");
     let target = temp.path().join("target.txt");
@@ -143,11 +143,13 @@ fn test_symlink_to_existing_symlink_fails() {
     // Create a symlink manually
     symlink(&source, &target).unwrap();
 
-    // Try to create symlink to same target
+    // Try to create symlink to same target — should succeed (idempotent)
     let mut state = State::new();
     let result = create_symlink(&source, &target, &mut state);
 
-    // Should fail because target exists (even though it's a symlink)
-    assert!(result.is_err());
-    assert_eq!(state.dotfiles.len(), 0);
+    assert!(result.is_ok());
+    // State should still track the dotfile
+    assert_eq!(state.dotfiles.len(), 1);
+    assert_eq!(state.dotfiles[0].source, source.to_string_lossy());
+    assert_eq!(state.dotfiles[0].target, target.to_string_lossy());
 }

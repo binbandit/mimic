@@ -189,8 +189,11 @@ target = "{}"
 
 #[test]
 fn test_cli_status_no_state() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_path = temp_dir.path().join("nonexistent_state.toml");
+
     let mut cmd = Command::cargo_bin("mimic").unwrap();
-    cmd.arg("status");
+    cmd.arg("--state").arg(&state_path).arg("status");
 
     cmd.assert()
         .success()
@@ -199,8 +202,11 @@ fn test_cli_status_no_state() {
 
 #[test]
 fn test_cli_undo_nothing_to_undo() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_path = temp_dir.path().join("nonexistent_state.toml");
+
     let mut cmd = Command::cargo_bin("mimic").unwrap();
-    cmd.arg("undo");
+    cmd.arg("--state").arg(&state_path).arg("undo");
 
     cmd.assert()
         .success()
