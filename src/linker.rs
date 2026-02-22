@@ -207,6 +207,8 @@ enum PrepareResult {
     Ready(Option<String>),
     /// Conflict was resolved by skipping.
     Skipped,
+    /// Target already points to the correct source — no action needed.
+    AlreadyCorrect,
 }
 
 /// Shared logic for resolving conflicts, creating backups, removing old targets,
@@ -219,6 +221,41 @@ fn prepare_target(
     let mut backup_path_str = None;
 
     if target.exists() || target.is_symlink() {
+        // Idempotency: if target is already a symlink pointing to the correct source, skip
+        if target.is_symlink() {
+            if let Ok(current_dest) = fs::read_link(target) {
+                let canonical_current = fs::canonicalize(&current_dest)
+                    .or_else(|_| {
+                        // Handle relative symlink targets
+                        if let Some(parent) = target.parent() {
+                            fs::canonicalize(parent.join(&current_dest))
+                        } else {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::NotFound,
+                                "cannot resolve",
+                            ))
+                        }
+                    })
+                    .ok();
+                let canonical_expected = fs::canonicalize(link_source).ok();
+
+                if canonical_current.is_some()
+                    && canonical_expected.is_some()
+                    && canonical_current == canonical_expected
+                {
+                    // Already correct — ensure parent dirs exist and return Ready
+                    if let Some(parent) = target.parent() {
+                        if !parent.exists() {
+                            fs::create_dir_all(parent).with_context(|| {
+                                format!("Failed to create parent directory: {}", parent.display())
+                            })?;
+                        }
+                    }
+                    return Ok(PrepareResult::AlreadyCorrect);
+                }
+            }
+        }
+
         let resolution = resolve_conflict(target, link_source, apply_to_all)?;
 
         match effective_choice(&resolution) {
@@ -293,6 +330,16 @@ pub fn create_symlink_with_resolution(
 
     let backup_path_str = match prepare_target(&expanded_target, &expanded_source, apply_to_all)? {
         PrepareResult::Skipped => return Ok(()),
+        PrepareResult::AlreadyCorrect => {
+            // Still record in state so status tracking works
+            state.add_dotfile(DotfileState {
+                source: expanded_source.to_string_lossy().to_string(),
+                target: expanded_target.to_string_lossy().to_string(),
+                backup_path: None,
+                rendered_path: None,
+            });
+            return Ok(());
+        }
         PrepareResult::Ready(bp) => bp,
     };
 
@@ -363,6 +410,15 @@ fn apply_template_dotfile(
 
     let backup_path_str = match prepare_target(&target, &temp_path, apply_to_all)? {
         PrepareResult::Skipped => return Ok(()),
+        PrepareResult::AlreadyCorrect => {
+            state.add_dotfile(DotfileState {
+                source: source.to_string_lossy().to_string(),
+                target: target.to_string_lossy().to_string(),
+                backup_path: None,
+                rendered_path: Some(temp_path.to_string_lossy().to_string()),
+            });
+            return Ok(());
+        }
         PrepareResult::Ready(bp) => bp,
     };
 
