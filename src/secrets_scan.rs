@@ -4,37 +4,26 @@
 //! - GitHub PAT, Stripe keys, AWS credentials, JWT, SSH keys
 //!
 //! No data leaves the machine. Supports `.secretsignore`.
+//!
+//! Note: ripsecrets prints matches directly to stdout via its BufferWriter.
+//! We return only the count of matches found.
 
 use anyhow::Result;
 use std::path::PathBuf;
 use termcolor::{BufferWriter, ColorChoice};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SecretMatch {
-    pub file_path: PathBuf,
-    pub line_number: usize,
-    pub pattern: String,
-    pub matched_text: String,
-}
-
-pub fn scan_for_secrets(paths: &[PathBuf]) -> Result<Vec<SecretMatch>> {
+/// Scan the given files for secrets using ripsecrets.
+///
+/// Returns the number of secret matches found. Detailed output is
+/// printed directly to stdout by ripsecrets.
+pub fn scan_for_secrets(paths: &[PathBuf]) -> Result<usize> {
     let writer = BufferWriter::stdout(ColorChoice::Always);
     let additional_patterns: Vec<String> = Vec::new();
 
     let count = ripsecrets::find_secrets(paths, &additional_patterns, true, false, writer)
         .map_err(|e| anyhow::anyhow!("Failed to scan for secrets: {}", e))?;
 
-    let mut matches = Vec::new();
-    for _ in 0..count {
-        matches.push(SecretMatch {
-            file_path: PathBuf::from(""),
-            line_number: 0,
-            pattern: String::new(),
-            matched_text: String::new(),
-        });
-    }
-
-    Ok(matches)
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -54,14 +43,14 @@ mod tests {
         )
         .unwrap();
 
-        let results = scan_for_secrets(&[test_file.clone()]).unwrap();
-        assert_eq!(results.len(), 0);
+        let count = scan_for_secrets(&[test_file.clone()]).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
     fn test_scan_empty_paths() {
-        let results = scan_for_secrets(&[]).unwrap();
-        assert_eq!(results.len(), 0);
+        let count = scan_for_secrets(&[]).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
@@ -84,8 +73,8 @@ mod tests {
         fs::write(&file1, "content without secrets").unwrap();
         fs::write(&file2, "more safe content").unwrap();
 
-        let results = scan_for_secrets(&[file1, file2]).unwrap();
-        assert_eq!(results.len(), 0);
+        let count = scan_for_secrets(&[file1, file2]).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
@@ -95,36 +84,8 @@ mod tests {
 
         fs::write(&test_file, "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE").unwrap();
 
-        let results = scan_for_secrets(&[test_file]).unwrap();
-        assert_eq!(results.len(), 1);
-    }
-
-    #[test]
-    fn test_secret_match_structure() {
-        let secret = SecretMatch {
-            file_path: PathBuf::from("/test/file.txt"),
-            line_number: 42,
-            pattern: "github_pat".to_string(),
-            matched_text: "ghp_xxxxx".to_string(),
-        };
-
-        assert_eq!(secret.file_path, PathBuf::from("/test/file.txt"));
-        assert_eq!(secret.line_number, 42);
-        assert_eq!(secret.pattern, "github_pat");
-        assert_eq!(secret.matched_text, "ghp_xxxxx");
-    }
-
-    #[test]
-    fn test_secret_match_clone_and_equality() {
-        let secret1 = SecretMatch {
-            file_path: PathBuf::from("/test/file.txt"),
-            line_number: 10,
-            pattern: "test".to_string(),
-            matched_text: "test_value".to_string(),
-        };
-
-        let secret2 = secret1.clone();
-        assert_eq!(secret1, secret2);
+        let count = scan_for_secrets(&[test_file]).unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]
@@ -133,8 +94,8 @@ mod tests {
         let test_file = temp_dir.path().join("empty.txt");
         fs::write(&test_file, "").unwrap();
 
-        let results = scan_for_secrets(&[test_file]).unwrap();
-        assert_eq!(results.len(), 0);
+        let count = scan_for_secrets(&[test_file]).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

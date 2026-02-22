@@ -1170,15 +1170,15 @@ impl Cli {
             }
         }
 
-        let secrets = scan_for_secrets(&paths_to_scan)?;
+        let secret_count = scan_for_secrets(&paths_to_scan)?;
 
         println!();
 
-        if !secrets.is_empty() {
+        if secret_count > 0 {
             println!("{}", "⚠ Secrets detected in repository".yellow().bold());
             println!(
                 "  {} secret(s) found - review output above",
-                secrets.len().to_string().yellow()
+                secret_count.to_string().yellow()
             );
             println!();
             println!(
