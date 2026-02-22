@@ -51,11 +51,16 @@ fn expand_env_vars(input: &str) -> Result<String> {
                 .peek()
                 .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
             {
-                // $VAR form
-                let var_name: String = chars
-                    .by_ref()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect();
+                // $VAR form — collect identifier chars using peek to avoid consuming delimiter
+                let mut var_name = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c.is_ascii_alphanumeric() || c == '_' {
+                        var_name.push(c);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
                 let value = std::env::var(&var_name)
                     .with_context(|| format!("Environment variable '{}' is not set", var_name))?;
                 result.push_str(&value);
@@ -128,18 +133,20 @@ mod tests {
 
     #[test]
     fn test_expand_env_var() {
-        std::env::set_var("MIMIC_TEST_VAR", "hello");
+        // SAFETY: test runs single-threaded; env var is unique to this test
+        unsafe { std::env::set_var("MIMIC_TEST_VAR", "hello") };
         let result = expand_str("$MIMIC_TEST_VAR/world").unwrap();
         assert_eq!(result, "hello/world");
-        std::env::remove_var("MIMIC_TEST_VAR");
+        unsafe { std::env::remove_var("MIMIC_TEST_VAR") };
     }
 
     #[test]
     fn test_expand_env_var_braced() {
-        std::env::set_var("MIMIC_TEST_BRACE", "braced");
+        // SAFETY: test runs single-threaded; env var is unique to this test
+        unsafe { std::env::set_var("MIMIC_TEST_BRACE", "braced") };
         let result = expand_str("${MIMIC_TEST_BRACE}/path").unwrap();
         assert_eq!(result, "braced/path");
-        std::env::remove_var("MIMIC_TEST_BRACE");
+        unsafe { std::env::remove_var("MIMIC_TEST_BRACE") };
     }
 
     #[test]
