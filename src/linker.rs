@@ -163,6 +163,76 @@ fn resolve_conflict(
     }
 }
 
+/// Result of preparing a target for symlink creation.
+enum PrepareResult {
+    /// Target is ready; contains optional backup path string.
+    Ready(Option<String>),
+    /// Conflict was resolved by skipping.
+    Skipped,
+}
+
+/// Shared logic for resolving conflicts, creating backups, removing old targets,
+/// and ensuring parent directories exist. Used by both regular and template dotfiles.
+fn prepare_target(
+    target: &Path,
+    link_source: &Path,
+    apply_to_all: &mut Option<ApplyToAllChoice>,
+) -> anyhow::Result<PrepareResult> {
+    let mut backup_path_str = None;
+
+    if target.exists() || target.is_symlink() {
+        let resolution = resolve_conflict(target, link_source, apply_to_all)?;
+
+        match effective_choice(&resolution) {
+            EffectiveChoice::Skip => return Ok(PrepareResult::Skipped),
+            EffectiveChoice::Overwrite => {
+                remove_target(target)?;
+            }
+            EffectiveChoice::Backup => {
+                // Only back up if the target has readable content (not a dangling symlink)
+                if target.exists() {
+                    let backup_path = backup_file(target)?;
+                    backup_path_str = Some(backup_path.to_string_lossy().to_string());
+                }
+                // Directory backups use rename, so the target may already be gone
+                if target.exists() || target.is_symlink() {
+                    remove_target(target)?;
+                }
+            }
+        }
+    }
+
+    // Ensure parent directories exist
+    if let Some(parent) = target.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create parent directory: {}", parent.display())
+            })?;
+        }
+    }
+
+    Ok(PrepareResult::Ready(backup_path_str))
+}
+
+enum EffectiveChoice {
+    Skip,
+    Overwrite,
+    Backup,
+}
+
+fn effective_choice(resolution: &ConflictResolution) -> EffectiveChoice {
+    match resolution {
+        ConflictResolution::Skip => EffectiveChoice::Skip,
+        ConflictResolution::Overwrite => EffectiveChoice::Overwrite,
+        ConflictResolution::Backup => EffectiveChoice::Backup,
+        ConflictResolution::ApplyToAll(choice) => match choice {
+            ApplyToAllChoice::Skip => EffectiveChoice::Skip,
+            ApplyToAllChoice::Overwrite => EffectiveChoice::Overwrite,
+            ApplyToAllChoice::Backup => EffectiveChoice::Backup,
+        },
+    }
+}
+
 pub fn create_symlink(source: &Path, target: &Path, state: &mut State) -> anyhow::Result<()> {
     create_symlink_with_resolution(source, target, state, &mut None)
 }
@@ -183,58 +253,10 @@ pub fn create_symlink_with_resolution(
         ));
     }
 
-    let mut backup_path_str = None;
-
-    if expanded_target.exists() || expanded_target.is_symlink() {
-        let resolution = resolve_conflict(&expanded_target, &expanded_source, apply_to_all)?;
-
-        match resolution {
-            ConflictResolution::Skip => {
-                return Ok(());
-            }
-            ConflictResolution::Overwrite => {
-                remove_target(&expanded_target)?;
-            }
-            ConflictResolution::Backup => {
-                // Only back up if the target has readable content (not a dangling symlink)
-                if expanded_target.exists() {
-                    let backup_path = backup_file(&expanded_target)?;
-                    backup_path_str = Some(backup_path.to_string_lossy().to_string());
-                }
-                // Directory backups use rename, so the target is already gone
-                if expanded_target.exists() || expanded_target.is_symlink() {
-                    remove_target(&expanded_target)?;
-                }
-            }
-            ConflictResolution::ApplyToAll(choice) => match choice {
-                ApplyToAllChoice::Skip => {
-                    return Ok(());
-                }
-                ApplyToAllChoice::Overwrite => {
-                    remove_target(&expanded_target)?;
-                }
-                ApplyToAllChoice::Backup => {
-                    // Only back up if the target has readable content (not a dangling symlink)
-                    if expanded_target.exists() {
-                        let backup_path = backup_file(&expanded_target)?;
-                        backup_path_str = Some(backup_path.to_string_lossy().to_string());
-                    }
-                    // Directory backups use rename, so the target is already gone
-                    if expanded_target.exists() || expanded_target.is_symlink() {
-                        remove_target(&expanded_target)?;
-                    }
-                }
-            },
-        }
-    }
-
-    if let Some(parent) = expanded_target.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create parent directory: {}", parent.display())
-            })?;
-        }
-    }
+    let backup_path_str = match prepare_target(&expanded_target, &expanded_source, apply_to_all)? {
+        PrepareResult::Skipped => return Ok(()),
+        PrepareResult::Ready(bp) => bp,
+    };
 
     symlink(&expanded_source, &expanded_target).with_context(|| LinkError::SymlinkFailed {
         from: expanded_source.display().to_string(),
@@ -308,55 +330,10 @@ fn apply_template_dotfile(
 
     println!("  {} Rendered: {}", "→".bright_black(), temp_path.display());
 
-    let mut backup_path_str = None;
-
-    if target.exists() || target.is_symlink() {
-        let resolution = resolve_conflict(&target, &temp_path, apply_to_all)?;
-
-        match resolution {
-            ConflictResolution::Skip => {
-                return Ok(());
-            }
-            ConflictResolution::Overwrite => {
-                remove_target(&target)?;
-            }
-            ConflictResolution::Backup => {
-                // Only back up if the target has readable content (not a dangling symlink)
-                if target.exists() {
-                    let backup_path = backup_file(&target)?;
-                    backup_path_str = Some(backup_path.to_string_lossy().to_string());
-                }
-                // Directory backups use rename, so the target is already gone
-                if target.exists() || target.is_symlink() {
-                    remove_target(&target)?;
-                }
-            }
-            ConflictResolution::ApplyToAll(choice) => match choice {
-                ApplyToAllChoice::Skip => {
-                    return Ok(());
-                }
-                ApplyToAllChoice::Overwrite => {
-                    remove_target(&target)?;
-                }
-                ApplyToAllChoice::Backup => {
-                    // Only back up if the target has readable content (not a dangling symlink)
-                    if target.exists() {
-                        let backup_path = backup_file(&target)?;
-                        backup_path_str = Some(backup_path.to_string_lossy().to_string());
-                    }
-                    // Directory backups use rename, so the target is already gone
-                    if target.exists() || target.is_symlink() {
-                        remove_target(&target)?;
-                    }
-                }
-            },
-        }
-    }
-
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
-    }
+    let backup_path_str = match prepare_target(&target, &temp_path, apply_to_all)? {
+        PrepareResult::Skipped => return Ok(()),
+        PrepareResult::Ready(bp) => bp,
+    };
 
     symlink(&temp_path, &target).with_context(|| LinkError::SymlinkFailed {
         from: temp_path.display().to_string(),
