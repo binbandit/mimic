@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 
+use crate::spinner::Spinner;
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Hook {
@@ -190,7 +192,13 @@ fn execute_rustup_hook(
     verbose: bool,
 ) -> anyhow::Result<()> {
     if !command_exists("rustup") {
-        println!("  {} Installing rustup...", "→".bright_black());
+        let spinner = if verbose {
+            println!("  {} Installing rustup...", "→".bright_black());
+            None
+        } else {
+            Some(Spinner::new("Installing rustup..."))
+        };
+
         let status = Command::new("sh")
             .arg("-c")
             .arg("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path")
@@ -199,7 +207,14 @@ fn execute_rustup_hook(
             .status()?;
 
         if !status.success() {
+            if let Some(spinner) = spinner {
+                spinner.finish_with_error("Failed to install rustup");
+            }
             return Err(anyhow::anyhow!("Failed to install rustup"));
+        }
+
+        if let Some(spinner) = spinner {
+            spinner.finish_with_message("✓ Installed rustup");
         }
     }
 
@@ -211,6 +226,16 @@ fn execute_rustup_hook(
                 toolchain
             );
         }
+
+        let spinner = if verbose {
+            None
+        } else {
+            Some(Spinner::new(format!(
+                "Installing rustup toolchain {}...",
+                toolchain
+            )))
+        };
+
         let status = Command::new("rustup")
             .args(["toolchain", "install", toolchain])
             .stdout(if verbose {
@@ -226,7 +251,14 @@ fn execute_rustup_hook(
             .status()?;
 
         if !status.success() {
+            if let Some(spinner) = spinner {
+                spinner.finish_with_error(format!("Failed to install toolchain {}", toolchain));
+            }
             return Err(anyhow::anyhow!("Failed to install {} toolchain", toolchain));
+        }
+
+        if let Some(spinner) = spinner {
+            spinner.finish_with_message(format!("✓ Installed toolchain {}", toolchain));
         }
     }
 
@@ -343,6 +375,15 @@ fn execute_cargo_install_hook(packages: &[CargoPackage], verbose: bool) -> anyho
             println!("  {} Installing {}...", "→".bright_black(), package.name);
         }
 
+        let spinner = if verbose {
+            None
+        } else {
+            Some(Spinner::new(format!(
+                "Installing cargo package {}...",
+                package.name
+            )))
+        };
+
         let mut args = vec!["install", &package.name, "--git", &package.git, "--locked"];
 
         if let Some(bin) = &package.bin {
@@ -364,11 +405,16 @@ fn execute_cargo_install_hook(packages: &[CargoPackage], verbose: bool) -> anyho
             .status()?;
 
         if !status.success() {
+            if let Some(spinner) = spinner {
+                spinner.finish_with_error(format!("Failed to install {}", package.name));
+            }
             eprintln!(
                 "  {} Failed to install {} (continuing)",
                 "⚠".yellow(),
                 package.name
             );
+        } else if let Some(spinner) = spinner {
+            spinner.finish_with_message(format!("✓ Installed {}", package.name));
         }
     }
 
@@ -383,6 +429,12 @@ fn execute_mise_hook(verbose: bool) -> anyhow::Result<()> {
     if verbose {
         println!("  {} Running mise install...", "→".bright_black());
     }
+
+    let spinner = if verbose {
+        None
+    } else {
+        Some(Spinner::new("Running mise install..."))
+    };
 
     let status = Command::new("mise")
         .arg("install")
@@ -399,7 +451,14 @@ fn execute_mise_hook(verbose: bool) -> anyhow::Result<()> {
         .status()?;
 
     if !status.success() {
+        if let Some(spinner) = spinner {
+            spinner.finish_with_error("mise install failed");
+        }
         return Err(anyhow::anyhow!("mise install failed"));
+    }
+
+    if let Some(spinner) = spinner {
+        spinner.finish_with_message("✓ Completed mise install");
     }
 
     Ok(())
@@ -414,6 +473,15 @@ fn execute_pnpm_global_hook(packages: &[String], verbose: bool) -> anyhow::Resul
         if verbose {
             println!("  {} Installing {}...", "→".bright_black(), package);
         }
+
+        let spinner = if verbose {
+            None
+        } else {
+            Some(Spinner::new(format!(
+                "Installing pnpm package {}...",
+                package
+            )))
+        };
 
         let status = Command::new("pnpm")
             .args(["add", "-g", package])
@@ -430,11 +498,16 @@ fn execute_pnpm_global_hook(packages: &[String], verbose: bool) -> anyhow::Resul
             .status()?;
 
         if !status.success() {
+            if let Some(spinner) = spinner {
+                spinner.finish_with_error(format!("Failed to install {}", package));
+            }
             eprintln!(
                 "  {} Failed to install {} (continuing)",
                 "⚠".yellow(),
                 package
             );
+        } else if let Some(spinner) = spinner {
+            spinner.finish_with_message(format!("✓ Installed {}", package));
         }
     }
 
@@ -454,6 +527,15 @@ fn execute_uv_python_hook(
         println!("  {} Installing Python {}...", "→".bright_black(), version);
     }
 
+    let install_spinner = if verbose {
+        None
+    } else {
+        Some(Spinner::new(format!(
+            "Installing Python {} via uv...",
+            version
+        )))
+    };
+
     let status = Command::new("uv")
         .args(["python", "install", version])
         .stdout(if verbose {
@@ -469,7 +551,14 @@ fn execute_uv_python_hook(
         .status()?;
 
     if !status.success() {
+        if let Some(spinner) = install_spinner {
+            spinner.finish_with_error(format!("Failed to install Python {}", version));
+        }
         return Err(anyhow::anyhow!("Failed to install Python {}", version));
+    }
+
+    if let Some(spinner) = install_spinner {
+        spinner.finish_with_message(format!("✓ Installed Python {}", version));
     }
 
     let output = Command::new("uv")
@@ -518,6 +607,12 @@ fn execute_command_hook(
         println!("  {} Running: {}", "→".bright_black(), command);
     }
 
+    let spinner = if verbose {
+        None
+    } else {
+        Some(Spinner::new("Running command hook..."))
+    };
+
     let status = Command::new("sh")
         .arg("-c")
         .arg(command)
@@ -534,7 +629,14 @@ fn execute_command_hook(
         .status()?;
 
     if !status.success() {
+        if let Some(spinner) = spinner {
+            spinner.finish_with_error("Command hook failed");
+        }
         return Err(anyhow::anyhow!("Command failed: {}", command));
+    }
+
+    if let Some(spinner) = spinner {
+        spinner.finish_with_message("✓ Command hook completed");
     }
 
     Ok(())
