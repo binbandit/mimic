@@ -853,6 +853,24 @@ impl Cli {
                     match restore_result {
                         Ok(()) => {
                             backups_restored += 1;
+                            // Clean up the backup file after successful restore
+                            // (rename already moved it; copy leaves it behind)
+                            if backup_path.exists() {
+                                if let Err(e) = if backup_path.is_dir() {
+                                    std::fs::remove_dir_all(&backup_path)
+                                } else {
+                                    std::fs::remove_file(&backup_path)
+                                } {
+                                    if self.verbose {
+                                        eprintln!(
+                                            "  {} Could not remove backup file {}: {}",
+                                            "⚠".yellow(),
+                                            backup_path.display(),
+                                            e
+                                        );
+                                    }
+                                }
+                            }
                             println!(
                                 "  {} Restored backup: {} → {}",
                                 "✓".green(),
