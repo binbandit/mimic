@@ -986,18 +986,7 @@ impl Cli {
             base_config
         };
 
-        let host_ctx = if !merged_config.hosts.is_empty() {
-            let host_config = merged_config.hosts.get(&host_name).unwrap();
-            HostContext {
-                name: host_name.clone(),
-                roles: host_config.roles.clone(),
-            }
-        } else {
-            HostContext {
-                name: "default".to_string(),
-                roles: vec![],
-            }
-        };
+        let host_ctx = Self::build_host_context(&merged_config, &Some(host_name));
 
         let template_path = PathBuf::from(template);
         let rendered = render_file(&template_path, &merged_config.variables, &host_ctx)?;
