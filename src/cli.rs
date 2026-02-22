@@ -927,6 +927,8 @@ impl Cli {
             }
         }
 
+        let package_count = state.packages.len();
+
         let mut new_state = State::new();
         new_state.clear();
 
@@ -944,6 +946,14 @@ impl Cli {
             println!("  {} symlinks removed", symlinks_removed);
             println!("  {} backups restored", backups_restored);
             println!("  {} errors occurred", errors.len());
+        }
+
+        if package_count > 0 {
+            println!(
+                "  {} {} installed packages preserved (use 'mimic clean' to remove)",
+                "ℹ".bright_black(),
+                package_count
+            );
         }
 
         if self.verbose {
