@@ -143,7 +143,16 @@ impl DiffEngine {
             expanded_source.clone()
         };
 
-        let canonical_expected = fs::canonicalize(&expected_path)?;
+        let canonical_expected = match fs::canonicalize(&expected_path) {
+            Ok(path) => path,
+            Err(_) => {
+                return Ok(Change::Modify {
+                    resource_type: ResourceType::Dotfile,
+                    description: format!("{}", expanded_target.display()),
+                    reason: format!("expected source missing: {}", expected_path.display()),
+                });
+            }
+        };
         let canonical_current = if current_link_target.is_absolute() {
             fs::canonicalize(&current_link_target).unwrap_or(current_link_target.clone())
         } else {
@@ -199,6 +208,9 @@ fn expand_path(path: &str) -> anyhow::Result<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_change_format_add() {
@@ -238,5 +250,46 @@ mod tests {
         assert!(result.is_ok());
         let expanded = result.unwrap();
         assert!(!expanded.to_string_lossy().contains("~"));
+    }
+
+    #[test]
+    fn test_template_diff_missing_rendered_file_returns_modify_not_error() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("mimic_diff_test_{}", unique));
+        fs::create_dir_all(&base).unwrap();
+
+        let source = base.join("template.conf.hbs");
+        let target = base.join("target.conf");
+        let actual = base.join("actual.conf");
+
+        fs::write(&source, "name={{name}}\n").unwrap();
+        fs::write(&actual, "rendered=true\n").unwrap();
+        symlink(&actual, &target).unwrap();
+
+        let dotfile = Dotfile {
+            source: source.to_string_lossy().to_string(),
+            target: target.to_string_lossy().to_string(),
+            template: false,
+            only_roles: None,
+            skip_roles: None,
+        };
+
+        let engine = DiffEngine::new();
+        let change = engine.diff_dotfile(&dotfile).unwrap();
+
+        match change {
+            Change::Modify { reason, .. } => {
+                assert!(reason.contains("expected source missing:"));
+            }
+            other => panic!("expected Modify, got {:?}", other),
+        }
+
+        let _ = fs::remove_file(&target);
+        let _ = fs::remove_file(&actual);
+        let _ = fs::remove_file(&source);
+        let _ = fs::remove_dir_all(&base);
     }
 }
