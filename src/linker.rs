@@ -163,6 +163,44 @@ fn resolve_conflict(
     }
 }
 
+/// Compute the rendered output path for a template source file.
+///
+/// Uses a stable hash prefix of the source's absolute path to avoid collisions
+/// when two templates have the same filename in different directories
+/// (e.g., `zsh/config.tmpl` and `git/config.tmpl`).
+pub fn rendered_path_for(source: &Path) -> anyhow::Result<PathBuf> {
+    let rendered_dir = directories::BaseDirs::new()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+        .home_dir()
+        .join(".mimic/rendered");
+
+    let filename = source
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Source path has no filename: {}", source.display()))?
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Filename contains invalid UTF-8"))?
+        .trim_end_matches(".tmpl")
+        .trim_end_matches(".hbs");
+
+    // Use a simple hash of the full source path to disambiguate same-name files
+    let source_str = source.to_string_lossy();
+    let hash = simple_hash(source_str.as_bytes());
+    let unique_name = format!("{}_{}", hash, filename);
+
+    Ok(rendered_dir.join(unique_name))
+}
+
+/// Simple non-cryptographic hash for path disambiguation.
+fn simple_hash(data: &[u8]) -> String {
+    // FNV-1a 64-bit hash, truncated to 8 hex chars for brevity
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &byte in data {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{:08x}", hash as u32)
+}
+
 /// Result of preparing a target for symlink creation.
 enum PrepareResult {
     /// Target is ready; contains optional backup path string.
@@ -317,14 +355,7 @@ fn apply_template_dotfile(
 
     std::fs::create_dir_all(&rendered_dir)?;
 
-    let filename = source
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .trim_end_matches(".tmpl")
-        .trim_end_matches(".hbs");
-    let temp_path = rendered_dir.join(filename);
+    let temp_path = rendered_path_for(&source)?;
 
     std::fs::write(&temp_path, rendered)?;
 

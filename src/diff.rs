@@ -1,9 +1,10 @@
 use crate::config::{Config, Dotfile};
 use crate::expand::expand_path_str;
 use crate::installer::HomebrewManager;
+use crate::linker::rendered_path_for;
 use colored::Colorize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
@@ -137,7 +138,7 @@ impl DiffEngine {
         // For template dotfiles, the symlink should point to the rendered file
         // in ~/.mimic/rendered/, not the original source template.
         let expected_path = if dotfile.is_template() {
-            self.get_rendered_path(&expanded_source)?
+            rendered_path_for(&expanded_source)?
         } else {
             expanded_source.clone()
         };
@@ -162,24 +163,6 @@ impl DiffEngine {
                 reason: format!("points to wrong target: {}", current_link_target.display()),
             })
         }
-    }
-
-    /// Compute the rendered path for a template dotfile, matching the logic in linker.rs.
-    fn get_rendered_path(&self, source: &Path) -> anyhow::Result<PathBuf> {
-        let rendered_dir = directories::BaseDirs::new()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-            .home_dir()
-            .join(".mimic/rendered");
-
-        let filename = source
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("Source path has no filename: {}", source.display()))?
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Filename contains invalid UTF-8"))?
-            .trim_end_matches(".tmpl")
-            .trim_end_matches(".hbs");
-
-        Ok(rendered_dir.join(filename))
     }
 
     fn diff_package(&self, name: &str, package_type: &str) -> anyhow::Result<Change> {
