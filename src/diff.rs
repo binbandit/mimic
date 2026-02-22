@@ -104,10 +104,11 @@ impl DiffEngine {
         let expanded_target = expand_path(&dotfile.target)?;
 
         if !expanded_source.exists() {
-            return Err(anyhow::anyhow!(
-                "Source file does not exist: {}",
-                expanded_source.display()
-            ));
+            return Ok(Change::Modify {
+                resource_type: ResourceType::Dotfile,
+                description: format!("{}", expanded_target.display()),
+                reason: format!("source missing: {}", expanded_source.display()),
+            });
         }
 
         if !expanded_target.exists() {
