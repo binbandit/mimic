@@ -163,6 +163,7 @@ impl Cli {
                 home.join("mimic.toml"),
                 base_dirs.config_dir().join("mimic/mimic.toml"),
                 base_dirs.config_dir().join("mimic/config.toml"),
+                base_dirs.config_dir().join("mimic/repo/mimic.toml"),
                 home.join(".dots/mimic.toml"),
                 home.join(".dotfiles/mimic.toml"),
             ];
@@ -175,7 +176,7 @@ impl Cli {
         }
 
         Err(anyhow::anyhow!(
-            "Config file not found. Searched:\n  - ./mimic.toml\n  - ~/mimic.toml\n  - ~/.config/mimic/mimic.toml\n  - ~/.config/mimic/config.toml\n  - ~/.dots/mimic.toml\n  - ~/.dotfiles/mimic.toml\n\nUse --config to specify a custom path."
+            "Config file not found. Searched:\n  - ./mimic.toml\n  - ~/mimic.toml\n  - ~/.config/mimic/mimic.toml\n  - ~/.config/mimic/config.toml\n  - ~/.config/mimic/repo/mimic.toml\n  - ~/.dots/mimic.toml\n  - ~/.dotfiles/mimic.toml\n\nUse --config to specify a custom path, or run 'mimic init <repo>' to get started."
         ))
     }
 
