@@ -92,7 +92,7 @@ impl DiffEngine {
 
         let normalized_packages = config.packages.normalized();
         for package in &normalized_packages.homebrew {
-            let change = self.diff_package(&package.name)?;
+            let change = self.diff_package(&package.name, &package.pkg_type)?;
             changes.push(change);
         }
 
@@ -181,17 +181,22 @@ impl DiffEngine {
         Ok(rendered_dir.join(filename))
     }
 
-    fn diff_package(&self, name: &str) -> anyhow::Result<Change> {
-        let is_installed = self.homebrew.is_installed(name)?;
+    fn diff_package(&self, name: &str, package_type: &str) -> anyhow::Result<Change> {
+        let is_installed = self.homebrew.is_installed_any(name, package_type)?;
+        let type_label = if package_type == "cask" {
+            "cask"
+        } else {
+            "formula"
+        };
 
         if is_installed {
             Ok(Change::AlreadyCorrect {
-                description: format!("brew package: {}", name),
+                description: format!("brew {}: {}", type_label, name),
             })
         } else {
             Ok(Change::Add {
                 resource_type: ResourceType::Package,
-                description: name.to_string(),
+                description: format!("{} ({})", name, type_label),
             })
         }
     }
