@@ -624,7 +624,7 @@ target = "/tmp/target.conf"
         .arg(&state_path)
         .arg("--yes")
         .assert()
-        .failure()
+        .success()
         .stderr(predicate::str::contains("does not exist"));
 
     // Test 2: Malformed TOML
@@ -765,14 +765,16 @@ target = "{}"
         .arg(&state_path)
         .arg("--yes")
         .assert()
-        .failure()
+        .success()
         .get_output()
         .clone();
 
+    // Missing source is now reported as a warning (on stderr) rather than
+    // aborting the entire apply, so the command succeeds but still warns.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("does not exist") || stderr.contains("No such file"),
-        "Should show error for nonexistent source: {}",
+        "Should show warning for nonexistent source: {}",
         stderr
     );
 }
