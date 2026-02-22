@@ -586,6 +586,14 @@ impl Cli {
             let target_path = PathBuf::from(&dotfile.target);
             let source_path = PathBuf::from(&dotfile.source);
 
+            // For template dotfiles, the symlink points to the rendered file,
+            // not the original source template.
+            let expected_path = if let Some(ref rendered) = dotfile.rendered_path {
+                PathBuf::from(rendered)
+            } else {
+                source_path.clone()
+            };
+
             if !target_path.exists() {
                 drift_details.push(format!(
                     "  {} {} (missing)",
@@ -616,14 +624,14 @@ impl Cli {
                             }
                         };
 
-                        let canonical_expected = match source_path.canonicalize() {
+                        let canonical_expected = match expected_path.canonicalize() {
                             Ok(p) => p,
                             Err(_) => {
                                 drift_details.push(format!(
                                     "  {} {} (source missing: {})",
                                     "✗".red(),
                                     target_path.display(),
-                                    source_path.display()
+                                    expected_path.display()
                                 ));
                                 dotfiles_drift += 1;
                                 continue;
@@ -636,7 +644,7 @@ impl Cli {
                                 "✗".yellow(),
                                 target_path.display(),
                                 actual_target.display(),
-                                source_path.display()
+                                expected_path.display()
                             ));
                             dotfiles_drift += 1;
                         } else {

@@ -483,7 +483,7 @@ fn execute_uv_python_hook(
     let python_bin = String::from_utf8(output.stdout)?.trim().to_string();
 
     for (name, target) in symlinks {
-        let expanded_target = shellexpand::tilde(target).to_string();
+        let expanded_target = crate::expand::expand_tilde(target)?;
 
         if verbose {
             println!(

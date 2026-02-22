@@ -1,5 +1,6 @@
 use crate::config::{Config, Dotfile};
 use crate::error::LinkError;
+use crate::expand::expand_path;
 use crate::state::{DotfileState, State};
 use crate::template::{render_file, HostContext};
 use anyhow::Context;
@@ -249,17 +250,6 @@ pub fn create_symlink_with_resolution(
     });
 
     Ok(())
-}
-
-fn expand_path(path: &Path) -> anyhow::Result<std::path::PathBuf> {
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8: {}", path.display()))?;
-
-    let expanded = shellexpand::full(path_str)
-        .with_context(|| format!("Failed to expand path: {}", path_str))?;
-
-    Ok(std::path::PathBuf::from(expanded.as_ref()))
 }
 
 pub fn apply_dotfile(
