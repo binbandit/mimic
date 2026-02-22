@@ -66,9 +66,25 @@ impl HomebrewManager {
         }
     }
 
+    /// Check if a formula is installed.
     pub fn is_installed(&self, name: &str) -> Result<bool, anyhow::Error> {
         let installed = self.list_installed()?;
         Ok(installed.iter().any(|pkg| pkg == name))
+    }
+
+    /// Check if a cask is installed.
+    pub fn is_installed_cask(&self, name: &str) -> Result<bool, anyhow::Error> {
+        let installed = self.list_installed_casks()?;
+        Ok(installed.iter().any(|pkg| pkg == name))
+    }
+
+    /// Check if a package is installed, routing to formula or cask based on type.
+    pub fn is_installed_any(&self, name: &str, package_type: &str) -> Result<bool, anyhow::Error> {
+        if package_type == "cask" {
+            self.is_installed_cask(name)
+        } else {
+            self.is_installed(name)
+        }
     }
 
     pub fn uninstall_many(&self, names: &[&str]) -> Result<Vec<String>, anyhow::Error> {
@@ -112,10 +128,11 @@ impl HomebrewManager {
     pub fn install(
         &self,
         name: &str,
-        _package_type: &str,
+        package_type: &str,
         state: &mut State,
     ) -> Result<(), anyhow::Error> {
-        let already_installed = self.is_installed(name)?;
+        let is_cask = package_type == "cask";
+        let already_installed = self.is_installed_any(name, package_type)?;
 
         if already_installed {
             if !state.packages.iter().any(|p| p.name == name) {
@@ -127,13 +144,21 @@ impl HomebrewManager {
             return Ok(());
         }
 
-        let spinner = Spinner::new(format!("Installing {}...", name));
+        let type_label = if is_cask { "cask" } else { "formula" };
+        let spinner = Spinner::new(format!("Installing {} ({})...", name, type_label));
 
-        let output = Command::new("brew").arg("install").arg(name).output();
+        let mut cmd = Command::new("brew");
+        cmd.arg("install");
+        if is_cask {
+            cmd.arg("--cask");
+        }
+        cmd.arg(name);
+
+        let output = cmd.output();
 
         match output {
             Ok(output) if output.status.success() => {
-                spinner.finish_with_message(format!("✓ Installed {}", name));
+                spinner.finish_with_message(format!("✓ Installed {} ({})", name, type_label));
                 state.add_package(PackageState {
                     name: name.to_string(),
                     manager: "brew".to_string(),
@@ -145,7 +170,11 @@ impl HomebrewManager {
                 let exit_code = output.status.code().unwrap_or(-1);
                 spinner.finish_with_error(format!("Failed to install {}", name));
                 Err(InstallError::CommandFailed {
-                    command: format!("brew install {}", name),
+                    command: format!(
+                        "brew install{} {}",
+                        if is_cask { " --cask" } else { "" },
+                        name
+                    ),
                     exit_code,
                     stderr: stderr.to_string(),
                 }
