@@ -770,7 +770,7 @@ impl Cli {
                 "{}",
                 "Run 'mimic apply' to reconcile drift.".yellow().bold()
             );
-            std::process::exit(1);
+            return Err(anyhow::anyhow!("__drift_detected__"));
         } else {
             println!("{}", "✓ All resources in sync".green().bold());
         }
@@ -1484,6 +1484,12 @@ pub fn run() -> Result<(), i32> {
     match cli.run() {
         Ok(()) => Ok(()),
         Err(e) => {
+            // Drift detection returns a silent exit code 1
+            // (the user-facing message was already printed)
+            if e.to_string() == "__drift_detected__" {
+                return Err(1);
+            }
+
             eprintln!("{} {}", "Error:".red().bold(), e);
 
             if cli.verbose
