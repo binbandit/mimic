@@ -498,7 +498,8 @@ fn execute_uv_python_hook(
             std::fs::create_dir_all(parent)?;
         }
 
-        if std::path::Path::new(&expanded_target).exists() {
+        let target_path = std::path::Path::new(&expanded_target);
+        if target_path.exists() || target_path.is_symlink() {
             std::fs::remove_file(&expanded_target)?;
         }
 
