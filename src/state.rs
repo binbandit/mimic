@@ -82,15 +82,29 @@ impl State {
         Ok(())
     }
 
-    /// Add a dotfile to the state
+    /// Add or update a dotfile in the state.
+    /// If a dotfile with the same target already exists, it is replaced.
     pub fn add_dotfile(&mut self, dotfile: DotfileState) {
-        self.dotfiles.push(dotfile);
+        if let Some(existing) = self
+            .dotfiles
+            .iter_mut()
+            .find(|d| d.target == dotfile.target)
+        {
+            *existing = dotfile;
+        } else {
+            self.dotfiles.push(dotfile);
+        }
         self.applied_at = Utc::now();
     }
 
-    /// Add a package to the state
+    /// Add or update a package in the state.
+    /// If a package with the same name already exists, it is replaced.
     pub fn add_package(&mut self, package: PackageState) {
-        self.packages.push(package);
+        if let Some(existing) = self.packages.iter_mut().find(|p| p.name == package.name) {
+            *existing = package;
+        } else {
+            self.packages.push(package);
+        }
         self.applied_at = Utc::now();
     }
 
