@@ -482,6 +482,7 @@ How it works:
 - Extended repos are cloned into `~/.config/mimic/extends/`
 - Repos are pulled on each config load to keep them current
 - Extended configs are merged first, then your local config overrides conflicts
+- Cyclic `[[extends]]` chains are detected and reported with the full chain
 
 Private repo authentication uses standard git auth:
 - SSH URLs: your SSH agent/keychain handles auth
@@ -534,6 +535,20 @@ mimic undo
 ```
 
 ## Commands
+
+### Global options
+
+These options are available on all commands:
+
+- `--config <PATH>` - Use a specific config file
+- `--state <PATH>` - Use a specific state file
+- `--host <NAME>` - Select host-specific config
+- `--yes, -y` - Skip interactive confirmations
+- `--dry-run, -n` - Preview changes without applying
+- `--verbose, -v` - Show detailed output
+- `--branch <NAME>` - Use an isolated initialized branch workspace (`~/.config/mimic/repos/<NAME>/`)
+
+`--branch` is especially useful with `init`, `apply`, and `diff` when you want to trial branch-specific dotfiles without affecting your default setup.
 
 ### `mimic apply`
 

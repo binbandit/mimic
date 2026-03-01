@@ -1,4 +1,4 @@
-use mimic::linker::{create_symlink_with_resolution, ApplyToAllChoice};
+use mimic::linker::{ApplyToAllChoice, create_symlink_with_resolution};
 use mimic::state::State;
 use std::fs;
 use std::path::PathBuf;

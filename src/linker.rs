@@ -2,7 +2,7 @@ use crate::config::{Config, Dotfile};
 use crate::error::LinkError;
 use crate::expand::expand_path;
 use crate::state::{DotfileState, State};
-use crate::template::{render_file, HostContext};
+use crate::template::{HostContext, render_file};
 use anyhow::Context;
 use chrono::Local;
 use colored::Colorize;

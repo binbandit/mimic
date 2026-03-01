@@ -132,10 +132,12 @@ fn list_secrets_via_dump() -> Result<Vec<String>> {
             in_mimic_entry = true;
         }
 
-        if in_mimic_entry && line.contains("\"acct\"<blob>=")
-            && let Some(account) = extract_account_name(line) {
-                current_account = Some(account);
-            }
+        if in_mimic_entry
+            && line.contains("\"acct\"<blob>=")
+            && let Some(account) = extract_account_name(line)
+        {
+            current_account = Some(account);
+        }
 
         if line.trim() == "}" {
             if let Some(account) = current_account.take() {

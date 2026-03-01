@@ -1,5 +1,5 @@
 use mimic::config::Dotfile;
-use mimic::template::{render_template, render_template_with_host, HostContext};
+use mimic::template::{HostContext, render_template, render_template_with_host};
 use std::collections::HashMap;
 
 #[test]

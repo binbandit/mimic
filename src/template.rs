@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use handlebars::{handlebars_helper, Handlebars};
-use serde_json::{json, Value};
+use handlebars::{Handlebars, handlebars_helper};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::Path;
 
