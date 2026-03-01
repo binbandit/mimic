@@ -231,6 +231,7 @@ fn test_cli_global_flags() {
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("--config"))
+        .stdout(predicate::str::contains("--branch"))
         .stdout(predicate::str::contains("--yes"))
         .stdout(predicate::str::contains("--dry-run"))
         .stdout(predicate::str::contains("--verbose"));

@@ -2,11 +2,11 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use std::path::PathBuf;
 
-use crate::config::{should_apply_for_roles, Config};
+use crate::config::{Config, should_apply_for_roles};
 use crate::diff::{Change, DiffEngine};
 use crate::hooks;
 use crate::installer::HomebrewManager;
-use crate::linker::{apply_dotfile, ApplyToAllChoice};
+use crate::linker::{ApplyToAllChoice, apply_dotfile};
 use crate::state::State;
 use crate::template::HostContext;
 use anyhow::Context;
@@ -41,6 +41,13 @@ pub struct Cli {
 
     #[arg(long, global = true, help = "Path to state file")]
     pub state: Option<PathBuf>,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Use a specific initialized dotfiles branch"
+    )]
+    pub branch: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -158,26 +165,57 @@ impl Cli {
 
         if let Some(base_dirs) = directories::BaseDirs::new() {
             let home = base_dirs.home_dir();
+            let mut candidates = Vec::new();
 
-            let candidates = [
+            if let Some(branch) = &self.branch {
+                candidates.push(
+                    base_dirs
+                        .config_dir()
+                        .join("mimic/repos")
+                        .join(branch)
+                        .join("mimic.toml"),
+                );
+            }
+
+            candidates.extend([
                 home.join("mimic.toml"),
                 base_dirs.config_dir().join("mimic/mimic.toml"),
                 base_dirs.config_dir().join("mimic/config.toml"),
                 base_dirs.config_dir().join("mimic/repo/mimic.toml"),
                 home.join(".dots/mimic.toml"),
                 home.join(".dotfiles/mimic.toml"),
-            ];
+            ]);
 
-            for candidate in &candidates {
+            for candidate in candidates {
                 if candidate.exists() {
-                    return Ok(candidate.clone());
+                    return Ok(candidate);
                 }
             }
         }
 
+        let branch_hint = self
+            .branch
+            .as_ref()
+            .map(|branch| format!("\n  - ~/.config/mimic/repos/{}/mimic.toml", branch))
+            .unwrap_or_default();
+
         Err(anyhow::anyhow!(
-            "Config file not found. Searched:\n  - ./mimic.toml\n  - ~/mimic.toml\n  - ~/.config/mimic/mimic.toml\n  - ~/.config/mimic/config.toml\n  - ~/.config/mimic/repo/mimic.toml\n  - ~/.dots/mimic.toml\n  - ~/.dotfiles/mimic.toml\n\nUse --config to specify a custom path, or run 'mimic init <repo>' to get started."
+            "Config file not found. Searched:\n  - ./mimic.toml\n  - ~/mimic.toml\n  - ~/.config/mimic/mimic.toml\n  - ~/.config/mimic/config.toml\n  - ~/.config/mimic/repo/mimic.toml{}\n  - ~/.dots/mimic.toml\n  - ~/.dotfiles/mimic.toml\n\nUse --config to specify a custom path, or run 'mimic init <repo>' to get started.",
+            branch_hint
         ))
+    }
+
+    fn repo_dir(&self) -> anyhow::Result<PathBuf> {
+        let base_dirs = directories::BaseDirs::new()
+            .ok_or_else(|| anyhow::anyhow!("Failed to determine home directory"))?;
+
+        let repo_dir = if let Some(branch) = &self.branch {
+            base_dirs.config_dir().join("mimic/repos").join(branch)
+        } else {
+            base_dirs.config_dir().join("mimic/repo")
+        };
+
+        Ok(repo_dir)
     }
 
     fn get_state_path(&self) -> PathBuf {
@@ -340,6 +378,7 @@ impl Cli {
             .collect();
 
         Config {
+            extends: Vec::new(),
             variables: config.variables,
             dotfiles: filtered_dotfiles,
             packages: crate::config::Packages {
@@ -1089,10 +1128,7 @@ impl Cli {
         use std::fs;
         use std::process::Command;
 
-        let repo_dir = directories::BaseDirs::new()
-            .ok_or_else(|| anyhow::anyhow!("Failed to determine home directory"))?
-            .config_dir()
-            .join("mimic/repo");
+        let repo_dir = self.repo_dir()?;
 
         if repo_dir.exists() {
             return Err(anyhow::anyhow!(
@@ -1114,13 +1150,14 @@ impl Cli {
 
         println!("{}", "Cloning repository...".bold());
 
-        let output = Command::new("git")
-            .arg("clone")
-            .arg("--depth")
-            .arg("1")
-            .arg(repo)
-            .arg(&repo_dir)
-            .output();
+        let mut clone_cmd = Command::new("git");
+        clone_cmd.arg("clone").arg("--depth").arg("1");
+        if let Some(branch) = &self.branch {
+            clone_cmd.arg("--branch").arg(branch).arg("--single-branch");
+        }
+        clone_cmd.arg(repo).arg(&repo_dir);
+
+        let output = clone_cmd.output();
 
         match output {
             Ok(output) if output.status.success() => {
@@ -1135,8 +1172,8 @@ impl Cli {
 
                 if stderr.contains("not found") || stderr.contains("does not exist") {
                     return Err(anyhow::anyhow!(
-                        "Git clone failed: Repository not found\n\nTo fix:\n  - Verify the repository URL is correct\n  - Ensure you have access to the repository\n  - Try cloning manually: git clone {}",
-                        repo
+                        "Git clone failed: Repository not found\n\nTo fix:\n  - Verify the repository URL is correct\n  - Ensure you have access to the repository\n  - Try cloning manually: {}",
+                        Self::manual_clone_command(repo, self.branch.as_deref())
                     ));
                 } else if stderr.contains("Authentication failed")
                     || stderr.contains("Permission denied")
@@ -1150,9 +1187,9 @@ impl Cli {
                     ));
                 } else {
                     return Err(anyhow::anyhow!(
-                        "Git clone failed\n\n{}\n\nTo fix:\n  - Try cloning manually: git clone {}",
+                        "Git clone failed\n\n{}\n\nTo fix:\n  - Try cloning manually: {}",
                         stderr.trim(),
-                        repo
+                        Self::manual_clone_command(repo, self.branch.as_deref())
                     ));
                 }
             }
@@ -1241,6 +1278,7 @@ impl Cli {
                 dry_run: self.dry_run,
                 verbose: self.verbose,
                 state: self.state.clone(),
+                branch: self.branch.clone(),
             };
 
             apply_cli.run_apply()?;
@@ -1255,6 +1293,17 @@ impl Cli {
         );
 
         Ok(())
+    }
+
+    fn manual_clone_command(repo: &str, branch: Option<&str>) -> String {
+        if let Some(branch) = branch {
+            format!(
+                "git clone --depth 1 --branch {} --single-branch {}",
+                branch, repo
+            )
+        } else {
+            format!("git clone --depth 1 {}", repo)
+        }
     }
 
     fn run_edit(&self, target: &str) -> anyhow::Result<()> {
@@ -1278,17 +1327,18 @@ impl Cli {
         let mut source_path: Option<String> = None;
 
         if state_path.exists()
-            && let Ok(state) = State::load(&state_path) {
-                for dotfile in &state.dotfiles {
-                    if dotfile.target == expanded_target || dotfile.target == target {
-                        source_path = Some(dotfile.source.clone());
-                        if self.verbose {
-                            println!("{} Found in state: {}", "→".bright_black(), dotfile.source);
-                        }
-                        break;
+            && let Ok(state) = State::load(&state_path)
+        {
+            for dotfile in &state.dotfiles {
+                if dotfile.target == expanded_target || dotfile.target == target {
+                    source_path = Some(dotfile.source.clone());
+                    if self.verbose {
+                        println!("{} Found in state: {}", "→".bright_black(), dotfile.source);
                     }
+                    break;
                 }
             }
+        }
 
         if source_path.is_none() {
             let config_path = self.find_config().with_context(|| {
@@ -1317,11 +1367,7 @@ impl Cli {
                     // Source paths are already resolved to absolute by Config::from_file
                     source_path = Some(dotfile.source.clone());
                     if self.verbose {
-                        println!(
-                            "{} Found in config: {}",
-                            "→".bright_black(),
-                            dotfile.source
-                        );
+                        println!("{} Found in config: {}", "→".bright_black(), dotfile.source);
                     }
                     break;
                 }
@@ -1450,7 +1496,11 @@ impl Cli {
         if self.dry_run {
             println!();
             for name in &extra_formulas {
-                println!("  {} Would uninstall {} (formula)", "→".bright_black(), name);
+                println!(
+                    "  {} Would uninstall {} (formula)",
+                    "→".bright_black(),
+                    name
+                );
             }
             for name in &extra_casks {
                 println!("  {} Would uninstall {} (cask)", "→".bright_black(), name);
@@ -1471,15 +1521,14 @@ impl Cli {
 
         match homebrew.uninstall_many(&all_packages) {
             Ok(_) => {
-                println!(
-                    "{}",
-                    format!("✓ Removed {} packages", total).green().bold()
-                );
+                println!("{}", format!("✓ Removed {} packages", total).green().bold());
             }
             Err(e) => {
                 eprintln!(
                     "{}",
-                    format!("✗ Failed to uninstall packages: {}", e).red().bold()
+                    format!("✗ Failed to uninstall packages: {}", e)
+                        .red()
+                        .bold()
                 );
             }
         }
@@ -1503,11 +1552,12 @@ pub fn run() -> Result<(), i32> {
             eprintln!("{} {}", "Error:".red().bold(), e);
 
             if cli.verbose
-                && let Some(source) = e.source() {
-                    eprintln!();
-                    eprintln!("{}", "Caused by:".bright_black());
-                    eprintln!("  {}", source);
-                }
+                && let Some(source) = e.source()
+            {
+                eprintln!();
+                eprintln!("{}", "Caused by:".bright_black());
+                eprintln!("  {}", source);
+            }
 
             Err(1)
         }

@@ -61,6 +61,7 @@ fn test_host_merge() {
     );
 
     let config = Config {
+        extends: vec![],
         variables: base_vars,
         dotfiles: vec![],
         packages: Packages::default(),
@@ -83,6 +84,7 @@ fn test_host_merge() {
 #[test]
 fn test_host_not_found() {
     let config = Config {
+        extends: vec![],
         variables: HashMap::new(),
         dotfiles: vec![],
         packages: Packages::default(),
@@ -278,11 +280,13 @@ fn test_complex_multi_host_scenario() {
     assert_eq!(personal.dotfiles.len(), 2);
     assert_eq!(personal.packages.homebrew.len(), 2);
     assert!(personal.packages.homebrew.iter().any(|p| p.name == "git"));
-    assert!(personal
-        .packages
-        .homebrew
-        .iter()
-        .any(|p| p.name == "spotify"));
+    assert!(
+        personal
+            .packages
+            .homebrew
+            .iter()
+            .any(|p| p.name == "spotify")
+    );
 
     let work = config.with_host("work").unwrap();
     assert_eq!(work.variables.get("editor").unwrap(), "nvim");

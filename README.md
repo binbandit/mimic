@@ -432,6 +432,14 @@ This command:
 3. Installs declared packages
 4. Shows progress with timing information
 
+For branch trials, use:
+
+```bash
+mimic --branch trial init --apply https://github.com/user/dotfiles
+```
+
+This stores the clone at `~/.config/mimic/repos/trial/` and lets you run that config later with `mimic --branch trial apply`.
+
 ### Manual Setup
 
 #### 1. Create a configuration file
@@ -455,6 +463,29 @@ target = "~/.gitconfig"
 [packages]
 brew = ["git", "neovim"]
 ```
+
+#### 1b. Compose config from multiple repositories
+
+You can extend your local config with additional repositories (including private repos):
+
+```toml
+[[extends]]
+repo = "git@github.com:your-org/private-dotfiles.git"
+branch = "main"
+
+[[extends]]
+repo = "https://github.com/your-org/team-dotfiles.git"
+config = "profiles/work/mimic.toml"
+```
+
+How it works:
+- Extended repos are cloned into `~/.config/mimic/extends/`
+- Repos are pulled on each config load to keep them current
+- Extended configs are merged first, then your local config overrides conflicts
+
+Private repo authentication uses standard git auth:
+- SSH URLs: your SSH agent/keychain handles auth
+- HTTPS URLs: your git credential helper handles auth
 
 #### 2. Preview changes
 
@@ -606,6 +637,9 @@ mimic undo --verbose
 
 Bootstrap a new dotfiles setup by cloning a repository to `~/.config/mimic/repo/`.
 
+Use the global `--branch <NAME>` flag to work with an isolated branch clone at
+`~/.config/mimic/repos/<NAME>/`.
+
 ```bash
 mimic init <REPO> [OPTIONS]
 ```
@@ -625,13 +659,16 @@ mimic init https://github.com/user/dotfiles
 # Clone and immediately apply
 mimic init --apply https://github.com/user/dotfiles
 
+# Clone and apply an isolated branch trial
+mimic --branch trial init --apply https://github.com/user/dotfiles
+
 # With SSH URL
 mimic init --apply git@github.com:user/dotfiles.git
 ```
 
 **Behavior:**
 - Clones with `--depth 1` for faster downloads
-- Stores repository in `~/.config/mimic/repo/`
+- Stores repository in `~/.config/mimic/repo/` (or `~/.config/mimic/repos/<branch>/` when `--branch` is set)
 - When using `--apply`, automatically runs `mimic apply --yes` with the cloned config
 - Shows progress with timing information
 

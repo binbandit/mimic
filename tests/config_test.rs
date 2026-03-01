@@ -151,6 +151,36 @@ fn test_parse_config_with_only_packages() {
 }
 
 #[test]
+fn test_parse_extends_repos() {
+    let toml_str = r#"
+        [[extends]]
+        repo = "git@github.com:org/private-dotfiles.git"
+        branch = "work"
+
+        [[extends]]
+        repo = "https://github.com/org/public-dotfiles.git"
+        config = "profiles/mac/mimic.toml"
+    "#;
+
+    let config = Config::from_str(toml_str).expect("Failed to parse extends block");
+
+    assert_eq!(config.extends.len(), 2);
+    assert_eq!(
+        config.extends[0].repo,
+        "git@github.com:org/private-dotfiles.git"
+    );
+    assert_eq!(config.extends[0].branch.as_deref(), Some("work"));
+    assert_eq!(config.extends[0].config, "mimic.toml");
+
+    assert_eq!(
+        config.extends[1].repo,
+        "https://github.com/org/public-dotfiles.git"
+    );
+    assert_eq!(config.extends[1].branch, None);
+    assert_eq!(config.extends[1].config, "profiles/mac/mimic.toml");
+}
+
+#[test]
 fn test_parse_config_from_file() {
     use std::fs;
     use std::io::Write;

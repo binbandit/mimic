@@ -68,11 +68,17 @@ target = "~/.test.conf"
 }
 
 /// Helper to get the mimic repo directory and clean it up
-fn get_and_clean_repo_dir() -> anyhow::Result<PathBuf> {
-    let repo_dir = directories::BaseDirs::new()
+fn get_and_clean_repo_dir(branch: Option<&str>) -> anyhow::Result<PathBuf> {
+    let base = directories::BaseDirs::new()
         .ok_or_else(|| anyhow::anyhow!("Failed to determine home directory"))?
         .config_dir()
-        .join("mimic/repo");
+        .join("mimic");
+
+    let repo_dir = if let Some(branch) = branch {
+        base.join("repos").join(branch)
+    } else {
+        base.join("repo")
+    };
 
     // Clean up any existing repo directory
     if repo_dir.exists() {
@@ -90,7 +96,7 @@ fn test_init_clones_repository() {
     create_test_git_repo(repo_path).expect("Failed to create test git repo");
 
     // Clean up any existing repo
-    let repo_dir = get_and_clean_repo_dir().expect("Failed to get repo dir");
+    let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Run mimic init with local repository path
     Command::cargo_bin("mimic")
@@ -124,7 +130,7 @@ fn test_init_clones_repository() {
 #[test]
 fn test_init_with_nonexistent_repo() {
     // Clean up any existing repo
-    let repo_dir = get_and_clean_repo_dir().expect("Failed to get repo dir");
+    let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Run mimic init with nonexistent repository
     Command::cargo_bin("mimic")
@@ -146,7 +152,7 @@ fn test_init_with_nonexistent_repo() {
 #[test]
 fn test_init_with_existing_directory() {
     // Clean up any existing repo
-    let repo_dir = get_and_clean_repo_dir().expect("Failed to get repo dir");
+    let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Create the repo directory manually
     fs::create_dir_all(&repo_dir).expect("Failed to create repo dir");
@@ -189,7 +195,7 @@ fn test_init_creates_shallow_clone() {
         .unwrap();
 
     // Clean up any existing repo
-    let repo_dir = get_and_clean_repo_dir().expect("Failed to get repo dir");
+    let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Run mimic init
     Command::cargo_bin("mimic")
@@ -235,7 +241,7 @@ fn test_init_with_apply_flag() {
     create_test_git_repo(repo_path).expect("Failed to create test git repo");
 
     // Clean up any existing repo
-    let repo_dir = get_and_clean_repo_dir().expect("Failed to get repo dir");
+    let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Get a temporary state file path
     let state_temp = TempDir::new().unwrap();
@@ -286,7 +292,7 @@ fn test_init_verifies_directory_created() {
     create_test_git_repo(repo_path).expect("Failed to create test git repo");
 
     // Clean up any existing repo
-    let repo_dir = get_and_clean_repo_dir().expect("Failed to get repo dir");
+    let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Verify directory doesn't exist before
     assert!(
@@ -320,7 +326,7 @@ fn test_init_output_format() {
     create_test_git_repo(repo_path).expect("Failed to create test git repo");
 
     // Clean up any existing repo
-    let repo_dir = get_and_clean_repo_dir().expect("Failed to get repo dir");
+    let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Run mimic init and capture output
     let output = Command::cargo_bin("mimic")
@@ -347,4 +353,69 @@ fn test_init_output_format() {
 
     // Cleanup
     fs::remove_dir_all(&repo_dir).ok();
+}
+
+#[test]
+fn test_init_with_branch_uses_branch_directory() {
+    use std::process::Command as StdCommand;
+
+    // Create a temporary git repository
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path();
+    create_test_git_repo(repo_path).expect("Failed to create test git repo");
+
+    // Add a trial branch with an extra commit
+    StdCommand::new("git")
+        .arg("checkout")
+        .arg("-b")
+        .arg("trial")
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    fs::write(repo_path.join("trial-only.txt"), "trial branch file").unwrap();
+    StdCommand::new("git")
+        .arg("add")
+        .arg("trial-only.txt")
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    StdCommand::new("git")
+        .arg("commit")
+        .arg("-m")
+        .arg("Add trial branch file")
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    // Clean up any existing repo dirs
+    let default_repo_dir = get_and_clean_repo_dir(None).expect("Failed to get default repo dir");
+    let branch_repo_dir =
+        get_and_clean_repo_dir(Some("trial")).expect("Failed to get branch repo dir");
+
+    // Run mimic init for specific branch
+    Command::cargo_bin("mimic")
+        .unwrap()
+        .arg("--branch")
+        .arg("trial")
+        .arg("init")
+        .arg(repo_path.to_str().unwrap())
+        .assert()
+        .success();
+
+    // Verify branch-specific clone location and contents
+    assert!(
+        branch_repo_dir.exists(),
+        "Branch repository directory should exist"
+    );
+    assert!(
+        branch_repo_dir.join("trial-only.txt").exists(),
+        "Trial branch file should exist in clone"
+    );
+    assert!(
+        !default_repo_dir.exists(),
+        "Default repo directory should not be used for branch clone"
+    );
+
+    // Cleanup
+    fs::remove_dir_all(&branch_repo_dir).ok();
 }

@@ -24,6 +24,7 @@ fn test_diff_detects_new_dotfile() {
     };
 
     let config = Config {
+        extends: vec![],
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
@@ -66,6 +67,7 @@ fn test_diff_symlink_already_correct() {
     };
 
     let config = Config {
+        extends: vec![],
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
@@ -109,6 +111,7 @@ fn test_diff_wrong_symlink_target() {
     };
 
     let config = Config {
+        extends: vec![],
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
@@ -150,6 +153,7 @@ fn test_diff_target_is_regular_file() {
     };
 
     let config = Config {
+        extends: vec![],
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
@@ -182,6 +186,7 @@ fn test_diff_package_not_installed() {
     };
 
     let config = Config {
+        extends: vec![],
         variables: Default::default(),
         dotfiles: vec![],
         packages: Packages {
@@ -223,6 +228,7 @@ fn test_diff_multiple_changes() {
     symlink(&source2, &target2).unwrap();
 
     let config = Config {
+        extends: vec![],
         variables: Default::default(),
         dotfiles: vec![
             Dotfile {
@@ -283,6 +289,7 @@ fn test_diff_pretty_format() {
     };
 
     let config = Config {
+        extends: vec![],
         variables: Default::default(),
         dotfiles: vec![dotfile],
         packages: Packages::default(),
