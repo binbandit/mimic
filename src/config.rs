@@ -399,6 +399,42 @@ impl Config {
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // If it looks like an auth problem, try gh-based authentication and retry
+        if crate::git_auth::is_auth_error(&stderr) {
+            crate::git_auth::ensure_gh_auth()?;
+
+            // Clean up any partial clone
+            if repo_dir.exists() {
+                fs::remove_dir_all(repo_dir).ok();
+            }
+
+            let mut retry_cmd = Command::new("git");
+            retry_cmd.arg("clone").arg("--depth").arg("1");
+            if let Some(branch) = &extend.branch {
+                retry_cmd
+                    .arg("--branch")
+                    .arg(branch)
+                    .arg("--single-branch");
+            }
+            retry_cmd.arg(&extend.repo).arg(repo_dir);
+
+            let retry_output = retry_cmd.output().map_err(|e| {
+                anyhow::anyhow!("Failed to execute git clone for '{}': {}", extend.repo, e)
+            })?;
+
+            if retry_output.status.success() {
+                return Ok(());
+            }
+
+            let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+            return Err(anyhow::anyhow!(Self::format_extended_repo_error(
+                "clone",
+                extend,
+                &retry_stderr
+            )));
+        }
+
         Err(anyhow::anyhow!(Self::format_extended_repo_error(
             "clone", extend, &stderr
         )))

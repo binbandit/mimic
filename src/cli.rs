@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::config::{Config, should_apply_for_roles};
 use crate::diff::{Change, DiffEngine};
+use crate::git_auth;
 use crate::hooks;
 use crate::installer::HomebrewManager;
 use crate::linker::{ApplyToAllChoice, apply_dotfile};
@@ -1126,7 +1127,6 @@ impl Cli {
         use crate::secrets_scan::scan_for_secrets;
         use dialoguer::Confirm;
         use std::fs;
-        use std::process::Command;
 
         let repo_dir = self.repo_dir()?;
 
@@ -1150,57 +1150,43 @@ impl Cli {
 
         println!("{}", "Cloning repository...".bold());
 
-        let mut clone_cmd = Command::new("git");
-        clone_cmd.arg("clone").arg("--depth").arg("1");
-        if let Some(branch) = &self.branch {
-            clone_cmd.arg("--branch").arg(branch).arg("--single-branch");
-        }
-        clone_cmd.arg(repo).arg(&repo_dir);
+        let clone_result = Self::try_git_clone(repo, &repo_dir, self.branch.as_deref());
 
-        let output = clone_cmd.output();
-
-        match output {
-            Ok(output) if output.status.success() => {
+        match clone_result {
+            Ok(()) => {
                 println!(
                     "  {} Repository cloned to {}",
                     "✓".green(),
                     repo_dir.display().to_string().green()
                 );
             }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(ref e) if format!("{e}").contains("__auth_retry__") => {
+                // Auth failed — attempt gh-based authentication then retry
+                git_auth::ensure_gh_auth()?;
 
-                if stderr.contains("not found") || stderr.contains("does not exist") {
-                    return Err(anyhow::anyhow!(
-                        "Git clone failed: Repository not found\n\nTo fix:\n  - Verify the repository URL is correct\n  - Ensure you have access to the repository\n  - Try cloning manually: {}",
-                        Self::manual_clone_command(repo, self.branch.as_deref())
-                    ));
-                } else if stderr.contains("Authentication failed")
-                    || stderr.contains("Permission denied")
-                {
-                    return Err(anyhow::anyhow!(
-                        "Git clone failed: Authentication failed\n\nTo fix:\n  - Ensure you have access to the repository\n  - Check your SSH keys or credentials\n  - Try using HTTPS URL instead of SSH (or vice versa)"
-                    ));
-                } else if stderr.contains("Could not resolve host") {
-                    return Err(anyhow::anyhow!(
-                        "Git clone failed: Network error\n\nTo fix:\n  - Check your internet connection\n  - Verify the repository host is correct"
-                    ));
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Git clone failed\n\n{}\n\nTo fix:\n  - Try cloning manually: {}",
-                        stderr.trim(),
-                        Self::manual_clone_command(repo, self.branch.as_deref())
-                    ));
+                println!("{}", "Retrying clone...".bold());
+
+                // Clean up partial clone if any
+                if repo_dir.exists() {
+                    fs::remove_dir_all(&repo_dir).ok();
                 }
+
+                Self::try_git_clone(repo, &repo_dir, self.branch.as_deref())
+                    .map_err(|retry_err| {
+                        anyhow::anyhow!(
+                            "Git clone failed after authentication\n\n{}\n\nTo fix:\n  - Verify you have access to the repository\n  - Try cloning manually: {}",
+                            retry_err,
+                            Self::manual_clone_command(repo, self.branch.as_deref())
+                        )
+                    })?;
+
+                println!(
+                    "  {} Repository cloned to {}",
+                    "✓".green(),
+                    repo_dir.display().to_string().green()
+                );
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(anyhow::anyhow!(
-                    "Git is not installed or not in PATH\n\nTo fix:\n  - Install git: brew install git (macOS)\n  - Or: apt install git (Linux)"
-                ));
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!("Failed to execute git: {}", e));
-            }
+            Err(e) => return Err(e),
         }
 
         println!();
@@ -1303,6 +1289,51 @@ impl Cli {
             )
         } else {
             format!("git clone --depth 1 {}", repo)
+        }
+    }
+
+    /// Attempt a git clone, returning a sentinel error for auth failures so the
+    /// caller can offer interactive gh-based authentication.
+    fn try_git_clone(
+        repo: &str,
+        repo_dir: &std::path::Path,
+        branch: Option<&str>,
+    ) -> anyhow::Result<()> {
+        use std::process::Command;
+
+        let mut cmd = Command::new("git");
+        cmd.arg("clone").arg("--depth").arg("1");
+        if let Some(branch) = branch {
+            cmd.arg("--branch").arg(branch).arg("--single-branch");
+        }
+        cmd.arg(repo).arg(repo_dir);
+
+        let output = cmd.output();
+
+        match output {
+            Ok(output) if output.status.success() => Ok(()),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                if git_auth::is_auth_error(&stderr) {
+                    // Signal to caller that auth-based retry is appropriate
+                    Err(anyhow::anyhow!("__auth_retry__: {}", stderr.trim()))
+                } else if stderr.contains("Could not resolve host") {
+                    Err(anyhow::anyhow!(
+                        "Git clone failed: Network error\n\nTo fix:\n  - Check your internet connection\n  - Verify the repository host is correct"
+                    ))
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Git clone failed\n\n{}\n\nTo fix:\n  - Try cloning manually: {}",
+                        stderr.trim(),
+                        Self::manual_clone_command(repo, branch)
+                    ))
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(anyhow::anyhow!(
+                "Git is not installed or not in PATH\n\nTo fix:\n  - Install git: brew install git (macOS)\n  - Or: apt install git (Linux)"
+            )),
+            Err(e) => Err(anyhow::anyhow!("Failed to execute git: {}", e)),
         }
     }
 
