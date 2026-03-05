@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use std::path::PathBuf;
 
+use crate::config;
 use crate::config::{Config, should_apply_for_roles};
 use crate::diff::{Change, DiffEngine};
 use crate::git_auth;
@@ -533,6 +534,11 @@ impl Cli {
 
         let homebrew = HomebrewManager::new();
         let normalized_packages = config.packages.normalized();
+
+        // Partition packages into formulae (batch install) and casks (install one at a time)
+        let mut formulae: Vec<&str> = Vec::new();
+        let mut casks: Vec<&config::Package> = Vec::new();
+
         for package in &normalized_packages.homebrew {
             if !should_apply_for_roles(&package.only_roles, &package.skip_roles, &host_ctx.roles) {
                 if self.verbose {
@@ -541,13 +547,64 @@ impl Cli {
                 continue;
             }
 
+            if package.pkg_type == "cask" {
+                casks.push(package);
+            } else {
+                formulae.push(&package.name);
+            }
+        }
+
+        // Batch install all formulae with a single `brew install x y z` call
+        if !formulae.is_empty() {
             if self.verbose {
-                println!("  {} {}", "Installing:".bright_black(), package.name);
+                println!(
+                    "  {} {} formulae: {}",
+                    "Installing:".bright_black(),
+                    formulae.len(),
+                    formulae.join(", ")
+                );
             }
 
-            match homebrew.install(&package.name, &package.pkg_type, &mut state) {
+            match homebrew.install_many_formulae(&formulae, &mut state) {
+                Ok(installed) => {
+                    for name in &installed {
+                        println!("  {} brew formula: {}", "✓".green(), name);
+                    }
+                    // Also print already-installed formulae that were skipped
+                    for name in &formulae {
+                        if !installed.iter().any(|i| i == name) {
+                            println!("  {} brew formula: {}", "✓".green(), name);
+                        }
+                    }
+                }
+                Err(errors) => {
+                    for (cmd, e) in &errors {
+                        eprintln!("  {} {} - {}", "✗".red(), cmd, e);
+                    }
+                    if !self.yes {
+                        use dialoguer::Confirm;
+                        let continue_on_error = Confirm::new()
+                            .with_prompt("Continue with remaining packages?")
+                            .default(true)
+                            .interact()?;
+
+                        if !continue_on_error {
+                            return Err(errors.into_iter().next().unwrap().1);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Install casks one at a time (they may need interactive prompts)
+        for package in &casks {
+            if self.verbose {
+                println!("  {} {} (cask)", "Installing:".bright_black(), package.name);
+            }
+
+            match homebrew.install_cask(&package.name, &mut state) {
                 Ok(()) => {
-                    println!("  {} brew package: {}", "✓".green(), package.name);
+                    println!("  {} brew cask: {}", "✓".green(), package.name);
                 }
                 Err(e) => {
                     eprintln!("  {} {} - {}", "✗".red(), package.name, e);

@@ -1,5 +1,5 @@
 use mimic::installer::HomebrewManager;
-use mimic::state::{PackageState, State};
+use mimic::state::State;
 use tempfile::TempDir;
 
 #[test]
@@ -62,41 +62,74 @@ fn test_is_installed_integration_git() {
 }
 
 #[test]
-fn test_install_idempotent() {
+fn test_install_many_formulae_idempotent() {
     let manager = HomebrewManager::new();
     let _temp_dir = TempDir::new().unwrap();
     let mut state = State::new();
 
-    // Try to install - should check first
-    let result = manager.install("git", "formula", &mut state);
+    // Try to batch install - should check first
+    let result = manager.install_many_formulae(&["git"], &mut state);
+
+    match result {
+        Ok(_installed) => {
+            // Should have added to state
+            assert!(state.packages.iter().any(|p| p.name == "git"));
+        }
+        Err(errors) => {
+            // If brew not available, should have clear error
+            for (_cmd, e) in &errors {
+                let err_msg = e.to_string().to_lowercase();
+                assert!(
+                    err_msg.contains("brew")
+                        || err_msg.contains("homebrew")
+                        || err_msg.contains("not found")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_install_cask_idempotent() {
+    let manager = HomebrewManager::new();
+    let _temp_dir = TempDir::new().unwrap();
+    let mut state = State::new();
+
+    // Try to install a cask
+    let result = manager.install_cask("nonexistent-cask-xyz123", &mut state);
 
     match result {
         Ok(()) => {
             // Should have added to state
-            assert!(state.packages.iter().any(|p| p.name == "git"));
+            assert!(state
+                .packages
+                .iter()
+                .any(|p| p.name == "nonexistent-cask-xyz123"));
         }
         Err(e) => {
-            // If brew not available, should have clear error
+            // If brew not available or cask doesn't exist, should have clear error
             let err_msg = e.to_string().to_lowercase();
             assert!(
                 err_msg.contains("brew")
                     || err_msg.contains("homebrew")
                     || err_msg.contains("not found")
+                    || err_msg.contains("no available")
+                    || err_msg.contains("cask")
             );
         }
     }
 }
 
 #[test]
-fn test_install_adds_to_state() {
+fn test_install_many_formulae_adds_to_state() {
     let manager = HomebrewManager::new();
     let mut state = State::new();
 
     // Initial state should be empty
     assert_eq!(state.packages.len(), 0);
 
-    // Attempt install (may fail if brew not present, but that's OK)
-    let _ = manager.install("test-package", "formula", &mut state);
+    // Attempt batch install (may fail if brew not present, but that's OK)
+    let _ = manager.install_many_formulae(&["test-package"], &mut state);
 
     // If install was attempted and brew was found, state should be updated
     // We can't guarantee this in test without brew, so we just verify the API works
@@ -120,17 +153,17 @@ fn test_missing_brew_error() {
 
 #[test]
 #[ignore]
-fn test_install_real_package() {
+fn test_install_many_formulae_real_package() {
     let manager = HomebrewManager::new();
     let _temp_dir = TempDir::new().unwrap();
     let mut state = State::new();
 
     // Try installing a real package (tree is lightweight)
-    let result = manager.install("tree", "formula", &mut state);
+    let result = manager.install_many_formulae(&["tree"], &mut state);
 
     // Should either succeed or fail gracefully
     match result {
-        Ok(()) => {
+        Ok(_installed) => {
             // Verify state was updated
             assert!(state.packages.iter().any(|p| p.name == "tree"));
 
@@ -142,33 +175,25 @@ fn test_install_real_package() {
                 "Package should be installed after install()"
             );
         }
-        Err(e) => {
+        Err(errors) => {
             // Acceptable if brew not present or package already installed
-            println!("Install failed (expected if brew unavailable): {}", e);
+            for (cmd, e) in errors {
+                println!(
+                    "Install failed (expected if brew unavailable): {} - {}",
+                    cmd, e
+                );
+            }
         }
     }
 }
 
 #[test]
-fn test_idempotent_install_skips_if_present() {
+fn test_install_many_formulae_empty() {
     let manager = HomebrewManager::new();
     let mut state = State::new();
 
-    state.add_package(PackageState {
-        name: "already-installed".to_string(),
-        manager: "brew".to_string(),
-    });
-
-    let _initial_count = state.packages.len();
-
-    // Try to install again
-    let _ = manager.install("already-installed", "formula", &mut state);
-
-    // State should not have duplicate entries
-    let duplicate_count = state
-        .packages
-        .iter()
-        .filter(|p| p.name == "already-installed")
-        .count();
-    assert!(duplicate_count <= 2, "Should not add too many duplicates");
+    // Empty list should return Ok immediately
+    let result = manager.install_many_formulae(&[], &mut state);
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_empty());
 }

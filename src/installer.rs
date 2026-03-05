@@ -125,14 +125,10 @@ impl HomebrewManager {
         }
     }
 
-    pub fn install(
-        &self,
-        name: &str,
-        package_type: &str,
-        state: &mut State,
-    ) -> Result<(), anyhow::Error> {
-        let is_cask = package_type == "cask";
-        let already_installed = self.is_installed_any(name, package_type)?;
+    /// Install a single cask package. Casks must be installed one at a time
+    /// because they may require interactive prompts (e.g. password for system extensions).
+    pub fn install_cask(&self, name: &str, state: &mut State) -> Result<(), anyhow::Error> {
+        let already_installed = self.is_installed_cask(name)?;
 
         if already_installed {
             if !state.packages.iter().any(|p| p.name == name) {
@@ -144,21 +140,17 @@ impl HomebrewManager {
             return Ok(());
         }
 
-        let type_label = if is_cask { "cask" } else { "formula" };
-        let spinner = Spinner::new(format!("Installing {} ({})...", name, type_label));
+        let spinner = Spinner::new(format!("Installing {} (cask)...", name));
 
-        let mut cmd = Command::new("brew");
-        cmd.arg("install");
-        if is_cask {
-            cmd.arg("--cask");
-        }
-        cmd.arg(name);
-
-        let output = cmd.output();
+        let output = Command::new("brew")
+            .arg("install")
+            .arg("--cask")
+            .arg(name)
+            .output();
 
         match output {
             Ok(output) if output.status.success() => {
-                spinner.finish_with_message(format!("✓ Installed {} ({})", name, type_label));
+                spinner.finish_with_message(format!("✓ Installed {} (cask)", name));
                 state.add_package(PackageState {
                     name: name.to_string(),
                     manager: "brew".to_string(),
@@ -170,11 +162,7 @@ impl HomebrewManager {
                 let exit_code = output.status.code().unwrap_or(-1);
                 spinner.finish_with_error(format!("Failed to install {}", name));
                 Err(InstallError::CommandFailed {
-                    command: format!(
-                        "brew install{} {}",
-                        if is_cask { " --cask" } else { "" },
-                        name
-                    ),
+                    command: format!("brew install --cask {}", name),
                     exit_code,
                     stderr: stderr.to_string(),
                 }
@@ -189,6 +177,106 @@ impl HomebrewManager {
             Err(e) => {
                 spinner.finish_with_error(format!("Failed to execute brew: {}", e));
                 Err(anyhow::anyhow!("Failed to execute brew: {}", e))
+            }
+        }
+    }
+
+    /// Batch-install formula packages. Filters out already-installed formulae with a single
+    /// `brew list --formula` call, then installs all remaining with one `brew install a b c` command.
+    /// Returns the list of package names that were newly installed.
+    pub fn install_many_formulae(
+        &self,
+        names: &[&str],
+        state: &mut State,
+    ) -> Result<Vec<String>, Vec<(String, anyhow::Error)>> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Single call to get all installed formulae
+        let installed = self
+            .list_installed()
+            .map_err(|e| vec![("brew list --formula".to_string(), e)])?;
+
+        let mut already_installed = Vec::new();
+        let mut to_install = Vec::new();
+
+        for &name in names {
+            if installed.iter().any(|pkg| pkg == name) {
+                already_installed.push(name);
+            } else {
+                to_install.push(name);
+            }
+        }
+
+        // Track already-installed packages in state
+        for name in &already_installed {
+            if !state.packages.iter().any(|p| p.name == *name) {
+                state.add_package(PackageState {
+                    name: name.to_string(),
+                    manager: "brew".to_string(),
+                });
+            }
+        }
+
+        if to_install.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let spinner = Spinner::new(format!(
+            "Installing {} formula{}...",
+            to_install.len(),
+            if to_install.len() == 1 { "" } else { "e" }
+        ));
+
+        let output = Command::new("brew")
+            .arg("install")
+            .args(&to_install)
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let installed_names: Vec<String> =
+                    to_install.iter().map(|s| s.to_string()).collect();
+                spinner
+                    .finish_with_message(format!("✓ Installed {} formulae", installed_names.len()));
+                for name in &installed_names {
+                    state.add_package(PackageState {
+                        name: name.clone(),
+                        manager: "brew".to_string(),
+                    });
+                }
+                Ok(installed_names)
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let exit_code = output.status.code().unwrap_or(-1);
+                spinner.finish_with_error(format!("brew install failed (exit {})", exit_code));
+                Err(vec![(
+                    format!("brew install {}", to_install.join(" ")),
+                    InstallError::CommandFailed {
+                        command: format!("brew install {}", to_install.join(" ")),
+                        exit_code,
+                        stderr: stderr.to_string(),
+                    }
+                    .into(),
+                )])
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                spinner.finish_with_error("Homebrew not found");
+                Err(vec![(
+                    "brew".to_string(),
+                    anyhow::anyhow!(
+                        "Homebrew not found. Please install Homebrew from https://brew.sh"
+                    ),
+                )])
+            }
+            Err(e) => {
+                spinner.finish_with_error(format!("Failed to execute brew: {}", e));
+                Err(vec![(
+                    "brew".to_string(),
+                    anyhow::anyhow!("Failed to execute brew: {}", e),
+                )])
             }
         }
     }
