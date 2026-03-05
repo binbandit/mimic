@@ -3,6 +3,7 @@ pub mod config;
 pub mod diff;
 pub mod error;
 pub mod expand;
+pub mod git_auth;
 pub mod hooks;
 pub mod installer;
 pub mod linker;
