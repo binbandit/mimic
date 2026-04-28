@@ -11,6 +11,7 @@ use crate::installer::HomebrewManager;
 use crate::linker::{ApplyToAllChoice, apply_dotfile};
 use crate::state::State;
 use crate::template::HostContext;
+use crate::zerobrew::ZerobrewManager;
 use anyhow::Context;
 
 #[derive(Parser)]
@@ -370,10 +371,16 @@ impl Cli {
             .cloned()
             .collect();
 
-        // Normalize first so brew/cask shorthand lists are included
+        // Normalize first so brew/cask/zb shorthand lists are included
         let normalized = config.packages.normalized();
         let filtered_packages: Vec<_> = normalized
             .homebrew
+            .iter()
+            .filter(|pkg| should_apply_for_roles(&pkg.only_roles, &pkg.skip_roles, host_roles))
+            .cloned()
+            .collect();
+        let filtered_zb: Vec<_> = normalized
+            .zerobrew
             .iter()
             .filter(|pkg| should_apply_for_roles(&pkg.only_roles, &pkg.skip_roles, host_roles))
             .cloned()
@@ -387,6 +394,8 @@ impl Cli {
                 homebrew: filtered_packages,
                 brew: Vec::new(),
                 cask: Vec::new(),
+                zerobrew: filtered_zb,
+                zb: Vec::new(),
             },
             hosts: config.hosts,
             hooks: config.hooks,
@@ -623,6 +632,57 @@ impl Cli {
             }
         }
 
+        // Install zerobrew packages
+        let zb_packages: Vec<&str> = normalized_packages
+            .zerobrew
+            .iter()
+            .filter(|p| {
+                should_apply_for_roles(&p.only_roles, &p.skip_roles, &host_ctx.roles)
+            })
+            .map(|p| p.name.as_str())
+            .collect();
+
+        if !zb_packages.is_empty() {
+            if self.verbose {
+                println!(
+                    "  {} {} zerobrew packages: {}",
+                    "Installing:".bright_black(),
+                    zb_packages.len(),
+                    zb_packages.join(", ")
+                );
+            }
+
+            let zerobrew = ZerobrewManager::new();
+            match zerobrew.install_many(&zb_packages, &mut state) {
+                Ok(installed) => {
+                    for name in &installed {
+                        println!("  {} zb: {}", "✓".green(), name);
+                    }
+                    for name in &zb_packages {
+                        if !installed.iter().any(|i| i == name) {
+                            println!("  {} zb: {}", "✓".green(), name);
+                        }
+                    }
+                }
+                Err(errors) => {
+                    for (cmd, e) in &errors {
+                        eprintln!("  {} {} - {}", "✗".red(), cmd, e);
+                    }
+                    if !self.yes {
+                        use dialoguer::Confirm;
+                        let continue_on_error = Confirm::new()
+                            .with_prompt("Continue with remaining packages?")
+                            .default(true)
+                            .interact()?;
+
+                        if !continue_on_error {
+                            return Err(errors.into_iter().next().unwrap().1);
+                        }
+                    }
+                }
+            }
+        }
+
         if !config.hooks.is_empty() {
             println!();
             println!("{}", "Running activation hooks...".bright_cyan().bold());
@@ -783,6 +843,7 @@ impl Cli {
         }
 
         let homebrew = HomebrewManager::new();
+        let zerobrew = ZerobrewManager::new();
         let mut packages_ok = 0;
         let mut packages_drift = 0;
 
@@ -806,6 +867,32 @@ impl Cli {
                     Err(e) => {
                         drift_details.push(format!(
                             "  {} error checking {}: {}",
+                            "✗".red(),
+                            package.name,
+                            e
+                        ));
+                        packages_drift += 1;
+                    }
+                }
+            } else if package.manager == "zb" {
+                match zerobrew.is_installed(&package.name) {
+                    Ok(true) => {
+                        packages_ok += 1;
+                        if self.verbose {
+                            println!("  {} zb: {}", "✓".green(), package.name);
+                        }
+                    }
+                    Ok(false) => {
+                        drift_details.push(format!(
+                            "  {} zb package not installed: {}",
+                            "✗".yellow(),
+                            package.name
+                        ));
+                        packages_drift += 1;
+                    }
+                    Err(e) => {
+                        drift_details.push(format!(
+                            "  {} error checking {} (zb): {}",
                             "✗".red(),
                             package.name,
                             e
@@ -1530,6 +1617,11 @@ impl Cli {
             .filter(|p| p.pkg_type == "cask")
             .map(|p| p.name.clone())
             .collect();
+        let config_zb: std::collections::HashSet<String> = normalized
+            .zerobrew
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
 
         let homebrew = HomebrewManager::new();
         let installed_formulas = homebrew.list_installed()?;
@@ -1544,7 +1636,20 @@ impl Cli {
             .filter(|p| !config_casks.contains(p.as_str()))
             .collect();
 
-        if extra_formulas.is_empty() && extra_casks.is_empty() {
+        // For zerobrew: only attempt list if there are zb packages configured, to avoid
+        // failing the whole clean command if zb is not installed when not in use.
+        let zerobrew = ZerobrewManager::new();
+        let extra_zb: Vec<String> = if !config_zb.is_empty() {
+            zerobrew
+                .list_installed()?
+                .into_iter()
+                .filter(|p| !config_zb.contains(p.as_str()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if extra_formulas.is_empty() && extra_casks.is_empty() && extra_zb.is_empty() {
             println!(
                 "{}",
                 "No extra packages to remove. System matches config.".green()
@@ -1559,11 +1664,15 @@ impl Cli {
         for name in &extra_casks {
             println!("  {} {} (cask)", "✗".yellow(), name);
         }
+        for name in &extra_zb {
+            println!("  {} {} (zb)", "✗".yellow(), name);
+        }
         println!();
         println!(
-            "  {} formulas, {} casks to remove",
+            "  {} formulas, {} casks, {} zb packages to remove",
             extra_formulas.len(),
-            extra_casks.len()
+            extra_casks.len(),
+            extra_zb.len()
         );
 
         if !self.yes {
@@ -1579,7 +1688,7 @@ impl Cli {
             }
         }
 
-        let total = extra_formulas.len() + extra_casks.len();
+        let total = extra_formulas.len() + extra_casks.len() + extra_zb.len();
 
         if self.dry_run {
             println!();
@@ -1593,6 +1702,9 @@ impl Cli {
             for name in &extra_casks {
                 println!("  {} Would uninstall {} (cask)", "→".bright_black(), name);
             }
+            for name in &extra_zb {
+                println!("  {} Would uninstall {} (zb)", "→".bright_black(), name);
+            }
             println!();
             println!(
                 "{}",
@@ -1604,20 +1716,49 @@ impl Cli {
         }
 
         println!();
-        let mut all_packages: Vec<&str> = extra_formulas.iter().map(|s| s.as_str()).collect();
-        all_packages.extend(extra_casks.iter().map(|s| s.as_str()));
+        let mut all_brew: Vec<&str> = extra_formulas.iter().map(|s| s.as_str()).collect();
+        all_brew.extend(extra_casks.iter().map(|s| s.as_str()));
 
-        match homebrew.uninstall_many(&all_packages) {
-            Ok(_) => {
-                println!("{}", format!("✓ Removed {} packages", total).green().bold());
+        if !all_brew.is_empty() {
+            match homebrew.uninstall_many(&all_brew) {
+                Ok(_) => {
+                    println!(
+                        "{}",
+                        format!("✓ Removed {} brew packages", all_brew.len())
+                            .green()
+                            .bold()
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!("✗ Failed to uninstall brew packages: {}", e)
+                            .red()
+                            .bold()
+                    );
+                }
             }
-            Err(e) => {
-                eprintln!(
-                    "{}",
-                    format!("✗ Failed to uninstall packages: {}", e)
-                        .red()
-                        .bold()
-                );
+        }
+
+        if !extra_zb.is_empty() {
+            let zb_refs: Vec<&str> = extra_zb.iter().map(|s| s.as_str()).collect();
+            match zerobrew.uninstall_many(&zb_refs) {
+                Ok(_) => {
+                    println!(
+                        "{}",
+                        format!("✓ Removed {} zb packages", extra_zb.len())
+                            .green()
+                            .bold()
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!("✗ Failed to uninstall zb packages: {}", e)
+                            .red()
+                            .bold()
+                    );
+                }
             }
         }
 

@@ -2,6 +2,7 @@ use crate::config::{Config, Dotfile};
 use crate::expand::expand_path_str;
 use crate::installer::HomebrewManager;
 use crate::linker::rendered_path_for;
+use crate::zerobrew::ZerobrewManager;
 use colored::Colorize;
 use std::fs;
 use std::path::Path;
@@ -70,17 +71,22 @@ impl Change {
 
 pub struct DiffEngine {
     homebrew: HomebrewManager,
+    zerobrew: ZerobrewManager,
 }
 
 impl DiffEngine {
     pub fn new() -> Self {
         Self {
             homebrew: HomebrewManager::new(),
+            zerobrew: ZerobrewManager::new(),
         }
     }
 
     pub fn with_homebrew(homebrew: HomebrewManager) -> Self {
-        Self { homebrew }
+        Self {
+            homebrew,
+            zerobrew: ZerobrewManager::new(),
+        }
     }
 
     pub fn diff(&self, config: &Config) -> anyhow::Result<Vec<Change>> {
@@ -94,6 +100,11 @@ impl DiffEngine {
         let normalized_packages = config.packages.normalized();
         for package in &normalized_packages.homebrew {
             let change = self.diff_package(&package.name, &package.pkg_type)?;
+            changes.push(change);
+        }
+
+        for package in &normalized_packages.zerobrew {
+            let change = self.diff_zerobrew_package(&package.name)?;
             changes.push(change);
         }
 
@@ -190,6 +201,21 @@ impl DiffEngine {
             Ok(Change::Add {
                 resource_type: ResourceType::Package,
                 description: format!("{} ({})", name, type_label),
+            })
+        }
+    }
+
+    fn diff_zerobrew_package(&self, name: &str) -> anyhow::Result<Change> {
+        let is_installed = self.zerobrew.is_installed(name)?;
+
+        if is_installed {
+            Ok(Change::AlreadyCorrect {
+                description: format!("zb: {}", name),
+            })
+        } else {
+            Ok(Change::Add {
+                resource_type: ResourceType::Package,
+                description: format!("{} (zb)", name),
             })
         }
     }

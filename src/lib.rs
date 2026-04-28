@@ -13,3 +13,4 @@ pub mod secrets_scan;
 pub mod spinner;
 pub mod state;
 pub mod template;
+pub mod zerobrew;

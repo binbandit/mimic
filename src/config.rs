@@ -119,11 +119,19 @@ pub struct Packages {
     /// Simple format: list of cask names
     #[serde(default)]
     pub cask: Vec<String>,
+
+    /// Verbose format: zerobrew packages
+    #[serde(default)]
+    pub zerobrew: Vec<Package>,
+
+    /// Simple format: list of zerobrew package names
+    #[serde(default)]
+    pub zb: Vec<String>,
 }
 
 impl Packages {
-    /// Merge simple format (brew/cask) into homebrew Vec<Package>
-    /// This allows both formats to coexist, deduplicating by name
+    /// Merge simple format (brew/cask/zb) into homebrew/zerobrew Vec<Package>.
+    /// This allows both formats to coexist, deduplicating by name.
     pub fn normalized(&self) -> Self {
         let mut homebrew = self.homebrew.clone();
 
@@ -151,10 +159,26 @@ impl Packages {
             }
         }
 
+        let mut zerobrew = self.zerobrew.clone();
+
+        // Add simple zb entries (skip if already present in zerobrew)
+        for name in &self.zb {
+            if !zerobrew.iter().any(|p| p.name == *name) {
+                zerobrew.push(Package {
+                    name: name.clone(),
+                    pkg_type: "formula".to_string(),
+                    only_roles: None,
+                    skip_roles: None,
+                });
+            }
+        }
+
         Packages {
             homebrew,
             brew: Vec::new(),
             cask: Vec::new(),
+            zerobrew,
+            zb: Vec::new(),
         }
     }
 }
@@ -317,6 +341,17 @@ impl Config {
                 *existing = pkg;
             } else {
                 merged_packages.homebrew.push(pkg);
+            }
+        }
+        for pkg in overlay_packages.zerobrew {
+            if let Some(existing) = merged_packages
+                .zerobrew
+                .iter_mut()
+                .find(|existing| existing.name == pkg.name && existing.pkg_type == pkg.pkg_type)
+            {
+                *existing = pkg;
+            } else {
+                merged_packages.zerobrew.push(pkg);
             }
         }
 
@@ -560,6 +595,11 @@ impl Config {
         for pkg in host_packages.homebrew {
             if !merged_packages.homebrew.iter().any(|p| p.name == pkg.name) {
                 merged_packages.homebrew.push(pkg);
+            }
+        }
+        for pkg in host_packages.zerobrew {
+            if !merged_packages.zerobrew.iter().any(|p| p.name == pkg.name) {
+                merged_packages.zerobrew.push(pkg);
             }
         }
 

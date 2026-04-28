@@ -193,6 +193,8 @@ fn test_diff_package_not_installed() {
             homebrew: vec![package],
             brew: Vec::new(),
             cask: Vec::new(),
+            zerobrew: Vec::new(),
+            zb: Vec::new(),
         },
         hosts: HashMap::new(),
         secrets: HashMap::new(),
