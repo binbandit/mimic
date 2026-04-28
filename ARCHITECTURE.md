@@ -160,6 +160,7 @@ pub struct Dotfile {
 
 pub struct Packages {
     pub homebrew: Vec<HomebrewPackage>,
+    pub zerobrew: Vec<Package>,
 }
 ```
 
@@ -288,6 +289,38 @@ impl HomebrewManager {
 - If package already installed but not in state, adds to state without reinstalling
 - Uses `std::process::Command` to shell out to `brew`
 
+### zerobrew Engine (`src/zerobrew.rs`)
+
+**Purpose:** Manage package installation via zerobrew (`zb`), a 5–20× faster experimental Homebrew alternative.
+
+**Responsibilities:**
+- Detect if zerobrew is installed
+- List installed packages via `zb list`
+- Batch-install packages via a single `zb install a b c` call
+- Uninstall packages via `zb uninstall`
+- Update state with installed packages (tagged `manager = "zb"`)
+
+**Key functions:**
+```rust
+impl ZerobrewManager {
+    pub fn new() -> Self
+    pub fn list_installed() -> Result<Vec<String>>
+    pub fn is_installed(name: &str) -> Result<bool>
+    pub fn install_many(
+        names: &[&str],
+        state: &mut State,
+    ) -> Result<Vec<String>, Vec<(String, anyhow::Error)>>
+    pub fn uninstall_many(names: &[&str]) -> Result<Vec<String>>
+}
+```
+
+**Design decisions:**
+- Mirrors `HomebrewManager` API exactly for consistency
+- Batch install with a single `zb install` call (zerobrew is already fast, but batching reduces process overhead)
+- State entries tagged `manager = "zb"` to distinguish from `"brew"` entries
+- Errors point users to `https://zerobrew.rs` when `zb` binary is not found
+- zerobrew only supports formulae (no cask equivalent); `pkg_type` is always `"formula"` in `[packages.zerobrew]`
+
 ### Diff Engine (`src/diff.rs`)
 
 **Purpose:** Compare desired state (config) against actual system state.
@@ -311,7 +344,7 @@ pub enum Change {
 
 **Algorithm:**
 - For dotfiles: check symlink existence, read target, canonicalize paths, compare
-- For packages: call `HomebrewManager::is_installed()`
+- For packages: call `HomebrewManager::is_installed()` for `[packages.homebrew]` entries, `ZerobrewManager::is_installed()` for `[packages.zerobrew]` entries
 - Returns all changes (including AlreadyCorrect for comprehensive view)
 
 **Design decisions:**
@@ -413,8 +446,10 @@ This shows how data flows through the system during `mimic apply`:
 3. DiffEngine::diff(&config)
    ├─> For each dotfile:
    │   └─> Check symlink state
-   ├─> For each package:
+   ├─> For each homebrew package:
    │   └─> Call HomebrewManager::is_installed()
+   ├─> For each zerobrew package:
+   │   └─> Call ZerobrewManager::is_installed()
    └─> Return Vec<Change>
 
 4. CLI displays changes, prompts user
@@ -428,12 +463,19 @@ This shows how data flows through the system during `mimic apply`:
        ├─> Create symlink
        └─> state.add_dotfile()
 
-6. For each package:
-   └─> HomebrewManager::install()
-       ├─> is_installed() check
-       ├─> If not installed:
-       │   └─> Command::new("brew").arg("install")...
-       └─> state.add_package()
+6a. For each homebrew package:
+    └─> HomebrewManager::install()
+        ├─> is_installed() check
+        ├─> If not installed:
+        │   └─> Command::new("brew").arg("install")...
+        └─> state.add_package() [manager = "brew"]
+
+6b. For each zerobrew package:
+    └─> ZerobrewManager::install_many()
+        ├─> list_installed() to batch-check
+        ├─> If any not installed:
+        │   └─> Command::new("zb").arg("install")... (single batched call)
+        └─> state.add_package() [manager = "zb"]
 
 7. State::save(&state_path)
    ├─> Serialize to TOML

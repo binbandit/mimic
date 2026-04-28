@@ -4,7 +4,7 @@ A declarative dotfile management system with symlink management, package install
 
 ## What is mimic?
 
-mimic is a CLI tool for managing your development environment configuration. It creates symlinks for your dotfiles, installs packages via Homebrew, and tracks everything in a state file. If anything drifts from the declared configuration (deleted symlinks, missing packages), mimic detects and fixes it.
+mimic is a CLI tool for managing your development environment configuration. It creates symlinks for your dotfiles, installs packages via Homebrew or [zerobrew](https://github.com/lucasgelfond/zerobrew), and tracks everything in a state file. If anything drifts from the declared configuration (deleted symlinks, missing packages), mimic detects and fixes it.
 
 **Key features:**
 - **Declarative configuration** - Define your desired state in a TOML file
@@ -15,6 +15,7 @@ mimic is a CLI tool for managing your development environment configuration. It 
 - **Secrets detection** - Scans files for API keys, tokens, and credentials (via ripsecrets)
 - **Visual feedback** - Progress spinners show operation timing (auto-hidden in CI)
 - **Better errors** - Full error chains with "To fix:" sections for actionable guidance
+- **Multiple package managers** - Homebrew and zerobrew supported side-by-side
 
 ## Installation
 
@@ -127,6 +128,7 @@ target = "~/.config/nvim"
 [packages]
 brew = ["git", "neovim", "tmux"]
 cask = ["visual-studio-code"]
+zb = ["ripgrep", "jq"]
 ```
 
 ### Step 5: Preview the Changes
@@ -389,6 +391,23 @@ brew search <package-name>
 # Update package name in mimic.toml if needed
 ```
 
+### Problem: zerobrew Package Installation Fails
+
+**Symptom:** zerobrew package won't install / `zb` not found
+
+**Fix:**
+```bash
+# Check zerobrew is installed
+zb --version
+
+# If not installed:
+curl -fsSL https://zerobrew.rs/install | bash
+# Then follow the export instruction it prints, or restart your terminal
+
+# Check package name is correct (zerobrew uses Homebrew formula names)
+brew search <package-name>
+```
+
 ### Problem: Permission Denied
 
 **Symptom:** Can't create symlink due to permissions
@@ -464,7 +483,7 @@ target = "~/.gitconfig"
 brew = ["git", "neovim"]
 ```
 
-#### 1b. Compose config from multiple repositories
+#### 1b. Compose config
 
 You can extend your local config with additional repositories (including private repos):
 
@@ -849,8 +868,9 @@ target = "path/to/target"
 
 # Simple format (recommended)
 [packages]
-brew = ["git", "neovim", "ripgrep"]
-cask = ["visual-studio-code", "docker"]
+brew = ["git", "neovim", "ripgrep"]  # Homebrew formulae
+cask = ["visual-studio-code", "docker"]  # Homebrew casks
+zb = ["jq", "wget"]  # zerobrew packages
 
 # Or use verbose format for role filtering
 [[packages.homebrew]]
@@ -858,6 +878,11 @@ name = "package-name"
 type = "formula"  # or "cask"
 only_roles = ["work"]  # optional: only install on hosts with these roles
 skip_roles = ["server"]  # optional: skip on hosts with these roles
+
+[[packages.zerobrew]]
+name = "ripgrep"
+type = "formula"
+only_roles = ["work"]
 ```
 
 ### Variables section
@@ -895,7 +920,7 @@ target = "~/.zshrc"          # Where to create symlink (~ expands to home dir)
 
 ### Packages
 
-Packages are installed via Homebrew (macOS/Linux).
+Packages are installed via Homebrew or [zerobrew](https://github.com/lucasgelfond/zerobrew) (a 5–20× faster experimental Homebrew alternative).
 
 **Simple format (recommended):**
 
@@ -903,6 +928,9 @@ Packages are installed via Homebrew (macOS/Linux).
 [packages]
 brew = ["git", "neovim", "tmux", "ripgrep"]
 cask = ["visual-studio-code", "docker"]
+
+# zerobrew packages (same syntax, uses `zb install` instead of `brew install`)
+zb = ["jq", "wget", "sqlite"]
 ```
 
 **Verbose format (for role filtering):**
@@ -913,12 +941,22 @@ name = "git"
 type = "formula"  # "formula" for CLI tools, "cask" for GUI apps
 only_roles = ["work"]  # optional: only install on hosts with these roles
 skip_roles = ["server"]  # optional: skip on hosts with these roles
+
+[[packages.zerobrew]]
+name = "ripgrep"
+type = "formula"
+only_roles = ["work"]
 ```
 
 **Package behavior:**
 - mimic installs declared packages if missing
-- mimic **never** uninstalls packages (safe by design)
-- To remove a package from management, remove it from config and run `mimic undo`
+- mimic **never** uninstalls packages during `apply` (safe by design); use `mimic clean` to remove packages not in config
+- Homebrew and zerobrew packages are tracked independently in state
+
+**zerobrew vs Homebrew:**
+- zerobrew (`zb`) is a performance-optimized client for the Homebrew ecosystem — 5–20× faster installs via content-addressable storage and APFS clonefiles
+- It is experimental; use it alongside Homebrew for packages where speed matters
+- If `zb` is not installed, mimic will error clearly and point you to `https://zerobrew.rs`
 
 ## Configuration File Discovery
 
