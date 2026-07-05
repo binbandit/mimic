@@ -295,7 +295,7 @@ fn test_complex_multi_host_scenario() {
         work.variables.get("http_proxy").unwrap(),
         "http://localhost:3128"
     );
-    assert!(work.variables.get("openai_model").is_none());
+    assert!(!work.variables.contains_key("openai_model"));
     assert_eq!(work.dotfiles.len(), 2);
     assert_eq!(work.packages.homebrew.len(), 2);
     assert!(work.packages.homebrew.iter().any(|p| p.name == "git"));

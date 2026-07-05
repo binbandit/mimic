@@ -38,7 +38,21 @@ fn expand_env_vars(input: &str) -> Result<String> {
             if chars.peek() == Some(&'{') {
                 // ${VAR} form
                 chars.next(); // consume '{'
-                let var_name: String = chars.by_ref().take_while(|c| *c != '}').collect();
+                let mut var_name = String::new();
+                let mut closed = false;
+                for c in chars.by_ref() {
+                    if c == '}' {
+                        closed = true;
+                        break;
+                    }
+                    var_name.push(c);
+                }
+                if !closed {
+                    return Err(anyhow::anyhow!(
+                        "Unterminated '${{' in '{}' (missing closing '}}')",
+                        input
+                    ));
+                }
                 if var_name.is_empty() {
                     result.push_str("${}");
                 } else {
@@ -165,6 +179,13 @@ mod tests {
     fn test_expand_missing_env_var_errors() {
         let result = expand_str("$MIMIC_NONEXISTENT_VAR_12345");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unterminated_brace_errors() {
+        let result = expand_str("${HOME/foo");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unterminated"), "got: {}", err);
     }
 
     #[test]

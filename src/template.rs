@@ -29,6 +29,10 @@ pub fn render_template_with_host(
 ) -> Result<String> {
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
+    // Templates render shell/TOML/git configs, not HTML — without this,
+    // values containing & < > " ' ` = get HTML-entity-escaped and corrupt
+    // the rendered dotfile.
+    handlebars.register_escape_fn(handlebars::no_escape);
 
     handlebars.register_helper("includes", Box::new(includes));
 

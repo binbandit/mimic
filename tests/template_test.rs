@@ -240,3 +240,18 @@ fn test_system_namespace() {
     assert!(result.starts_with("OS: "));
     assert!(result.contains(", Arch: "));
 }
+
+#[test]
+fn test_values_are_not_html_escaped() {
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://host/?a=1&b=2".to_string());
+    vars.insert("password".to_string(), r#"p@ss&<>"'`=w0rd"#.to_string());
+
+    let template = "url={{ variables.url }}\npass={{ variables.password }}";
+    let result = render_template(template, &vars).unwrap();
+
+    assert_eq!(
+        result, "url=https://host/?a=1&b=2\npass=p@ss&<>\"'`=w0rd",
+        "dotfile templates must render values verbatim, not HTML-escaped"
+    );
+}

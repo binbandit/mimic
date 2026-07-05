@@ -1,35 +1,8 @@
-use mimic::state::{DotfileState, PackageState, State};
+use mimic::state::{DotfileState, State};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use tempfile::TempDir;
-
-/// Helper to create a test state file with dotfiles and packages
-fn create_test_state(state_path: &PathBuf) -> anyhow::Result<State> {
-    let mut state = State::new();
-
-    state.add_dotfile(DotfileState {
-        source: "/tmp/test_source1".to_string(),
-        target: "/tmp/test_target1".to_string(),
-        backup_path: None,
-        rendered_path: None,
-    });
-
-    state.add_dotfile(DotfileState {
-        source: "/tmp/test_source2".to_string(),
-        target: "/tmp/test_target2".to_string(),
-        backup_path: None,
-        rendered_path: None,
-    });
-
-    state.add_package(PackageState {
-        name: "test_package".to_string(),
-        manager: "brew".to_string(),
-    });
-
-    state.save(state_path)?;
-    Ok(state)
-}
 
 #[test]
 fn test_status_detects_broken_symlink() -> anyhow::Result<()> {

@@ -1,7 +1,5 @@
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
-use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -35,8 +33,7 @@ target = "{}"
 
     let state_path = temp_dir.path().join("state.toml");
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -59,8 +56,7 @@ target = "{}"
         .collect();
     assert_eq!(backup_files.len(), 1);
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("undo")
         .arg("--state")
         .arg(&state_path)
@@ -82,8 +78,7 @@ fn test_undo_nothing_to_undo() {
     let temp_dir = TempDir::new().unwrap();
     let state_path = temp_dir.path().join("state.toml");
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("undo")
         .arg("--state")
         .arg(&state_path)
@@ -109,8 +104,7 @@ target = "{}"
 
     let state_path = temp_dir.path().join("state.toml");
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -124,8 +118,7 @@ target = "{}"
 
     fs::remove_file(&target_path).unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("undo")
         .arg("--state")
         .arg(&state_path)
@@ -170,8 +163,7 @@ target = "{}"
 
     let state_path = temp_dir.path().join("state.toml");
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -184,8 +176,7 @@ target = "{}"
     assert!(target1.is_symlink());
     assert!(target2.is_symlink());
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("undo")
         .arg("--state")
         .arg(&state_path)
@@ -217,8 +208,7 @@ target = "{}"
 
     let state_path = temp_dir.path().join("state.toml");
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -230,8 +220,7 @@ target = "{}"
 
     assert!(target_path.is_symlink());
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("undo")
         .arg("--state")
         .arg(&state_path)
@@ -241,4 +230,102 @@ target = "{}"
         .stdout(predicate::str::contains("0 backups restored"));
 
     assert!(!target_path.exists());
+}
+
+#[test]
+fn test_undo_preserves_user_replaced_target() {
+    let (temp_dir, config_path, source_path, target_path) = setup_test_env();
+
+    let config_content = format!(
+        r#"
+[[dotfiles]]
+source = "{}"
+target = "{}"
+"#,
+        source_path.display(),
+        target_path.display()
+    );
+    fs::write(&config_path, config_content).unwrap();
+
+    let state_path = temp_dir.path().join("state.toml");
+
+    assert_cmd::cargo_bin_cmd!("mimic")
+        .arg("apply")
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--state")
+        .arg(&state_path)
+        .arg("--yes")
+        .assert()
+        .success();
+
+    assert!(target_path.is_symlink());
+
+    // User replaces the managed symlink with their own real file
+    fs::remove_file(&target_path).unwrap();
+    fs::write(&target_path, "user's precious new content").unwrap();
+
+    assert_cmd::cargo_bin_cmd!("mimic")
+        .arg("undo")
+        .arg("--state")
+        .arg(&state_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "no longer a mimic-managed symlink",
+        ));
+
+    // The user's file must survive undo untouched
+    assert_eq!(
+        fs::read_to_string(&target_path).unwrap(),
+        "user's precious new content"
+    );
+}
+
+#[test]
+fn test_undo_after_reapply_still_restores_backup() {
+    let (temp_dir, config_path, source_path, target_path) = setup_test_env();
+
+    fs::write(&target_path, "original content").unwrap();
+
+    let config_content = format!(
+        r#"
+[[dotfiles]]
+source = "{}"
+target = "{}"
+"#,
+        source_path.display(),
+        target_path.display()
+    );
+    fs::write(&config_path, config_content).unwrap();
+
+    let state_path = temp_dir.path().join("state.toml");
+
+    for _ in 0..2 {
+        // Second (idempotent) apply used to wipe the backup pointer from state
+        assert_cmd::cargo_bin_cmd!("mimic")
+            .arg("apply")
+            .arg("--config")
+            .arg(&config_path)
+            .arg("--state")
+            .arg(&state_path)
+            .arg("--yes")
+            .assert()
+            .success();
+    }
+
+    assert!(target_path.is_symlink());
+
+    assert_cmd::cargo_bin_cmd!("mimic")
+        .arg("undo")
+        .arg("--state")
+        .arg(&state_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 backups restored"));
+
+    assert_eq!(
+        fs::read_to_string(&target_path).unwrap(),
+        "original content"
+    );
 }

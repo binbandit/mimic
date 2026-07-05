@@ -101,10 +101,12 @@ fn test_install_cask_idempotent() {
     match result {
         Ok(()) => {
             // Should have added to state
-            assert!(state
-                .packages
-                .iter()
-                .any(|p| p.name == "nonexistent-cask-xyz123"));
+            assert!(
+                state
+                    .packages
+                    .iter()
+                    .any(|p| p.name == "nonexistent-cask-xyz123")
+            );
         }
         Err(e) => {
             // If brew not available or cask doesn't exist, should have clear error

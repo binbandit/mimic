@@ -1,11 +1,10 @@
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
 #[test]
 fn test_cli_help() {
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("--help");
 
     cmd.assert()
@@ -19,7 +18,7 @@ fn test_cli_help() {
 
 #[test]
 fn test_cli_version() {
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("--version");
 
     cmd.assert()
@@ -29,7 +28,7 @@ fn test_cli_version() {
 
 #[test]
 fn test_cli_diff_missing_config() {
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("diff").arg("--config").arg("/nonexistent.toml");
 
     cmd.assert()
@@ -61,7 +60,7 @@ target = "{}/.vimrc"
     );
     fs::write(&config_path, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("diff").arg("--config").arg(config_path);
 
     cmd.assert()
@@ -96,7 +95,7 @@ target = "{}"
     );
     fs::write(&config_path, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("diff").arg("--config").arg(config_path);
 
     cmd.assert().success().stdout(predicate::str::contains("✓"));
@@ -123,7 +122,7 @@ target = "{}/.zshrc"
     );
     fs::write(&config_path, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -161,7 +160,7 @@ target = "{}"
     );
     fs::write(&config_path, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -192,7 +191,7 @@ fn test_cli_status_no_state() {
     let temp_dir = TempDir::new().unwrap();
     let state_path = temp_dir.path().join("nonexistent_state.toml");
 
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("--state").arg(&state_path).arg("status");
 
     cmd.assert()
@@ -205,7 +204,7 @@ fn test_cli_undo_nothing_to_undo() {
     let temp_dir = TempDir::new().unwrap();
     let state_path = temp_dir.path().join("nonexistent_state.toml");
 
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("--state").arg(&state_path).arg("undo");
 
     cmd.assert()
@@ -215,7 +214,7 @@ fn test_cli_undo_nothing_to_undo() {
 
 #[test]
 fn test_cli_apply_missing_config() {
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("apply").arg("--config").arg("/nonexistent.toml");
 
     cmd.assert()
@@ -225,7 +224,7 @@ fn test_cli_apply_missing_config() {
 
 #[test]
 fn test_cli_global_flags() {
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.arg("--help");
 
     cmd.assert()
@@ -259,7 +258,7 @@ target = "{}/.gitconfig"
     );
     fs::write(&cwd_config, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("mimic").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("mimic");
     cmd.current_dir(temp_dir.path()).arg("diff");
 
     // Should succeed by finding mimic.toml in CWD

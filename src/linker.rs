@@ -222,37 +222,37 @@ fn prepare_target(
 
     if target.exists() || target.is_symlink() {
         // Idempotency: if target is already a symlink pointing to the correct source, skip
-        if target.is_symlink() {
-            if let Ok(current_dest) = fs::read_link(target) {
-                let canonical_current = fs::canonicalize(&current_dest)
-                    .or_else(|_| {
-                        // Handle relative symlink targets
-                        if let Some(parent) = target.parent() {
-                            fs::canonicalize(parent.join(&current_dest))
-                        } else {
-                            Err(std::io::Error::new(
-                                std::io::ErrorKind::NotFound,
-                                "cannot resolve",
-                            ))
-                        }
-                    })
-                    .ok();
-                let canonical_expected = fs::canonicalize(link_source).ok();
-
-                if canonical_current.is_some()
-                    && canonical_expected.is_some()
-                    && canonical_current == canonical_expected
-                {
-                    // Already correct — ensure parent dirs exist and return Ready
+        if target.is_symlink()
+            && let Ok(current_dest) = fs::read_link(target)
+        {
+            let canonical_current = fs::canonicalize(&current_dest)
+                .or_else(|_| {
+                    // Handle relative symlink targets
                     if let Some(parent) = target.parent() {
-                        if !parent.exists() {
-                            fs::create_dir_all(parent).with_context(|| {
-                                format!("Failed to create parent directory: {}", parent.display())
-                            })?;
-                        }
+                        fs::canonicalize(parent.join(&current_dest))
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "cannot resolve",
+                        ))
                     }
-                    return Ok(PrepareResult::AlreadyCorrect);
+                })
+                .ok();
+            let canonical_expected = fs::canonicalize(link_source).ok();
+
+            if canonical_current.is_some()
+                && canonical_expected.is_some()
+                && canonical_current == canonical_expected
+            {
+                // Already correct — ensure parent dirs exist and return Ready
+                if let Some(parent) = target.parent()
+                    && !parent.exists()
+                {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!("Failed to create parent directory: {}", parent.display())
+                    })?;
                 }
+                return Ok(PrepareResult::AlreadyCorrect);
             }
         }
 
@@ -278,12 +278,11 @@ fn prepare_target(
     }
 
     // Ensure parent directories exist
-    if let Some(parent) = target.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create parent directory: {}", parent.display())
-            })?;
-        }
+    if let Some(parent) = target.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
     }
 
     Ok(PrepareResult::Ready(backup_path_str))
@@ -401,10 +400,20 @@ fn apply_template_dotfile(
         .join(".mimic/rendered");
 
     std::fs::create_dir_all(&rendered_dir)?;
+    // Rendered files can contain keychain secrets, so keep the directory and
+    // files readable only by the owner.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&rendered_dir, fs::Permissions::from_mode(0o700))?;
+    }
 
     let temp_path = rendered_path_for(&source)?;
 
     std::fs::write(&temp_path, rendered)?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
+    }
 
     println!("  {} Rendered: {}", "→".bright_black(), temp_path.display());
 

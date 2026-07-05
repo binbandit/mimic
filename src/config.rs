@@ -233,13 +233,17 @@ pub fn should_apply_for_roles(
     true
 }
 
-impl Config {
-    pub fn from_str(content: &str) -> anyhow::Result<Self> {
+impl std::str::FromStr for Config {
+    type Err = anyhow::Error;
+
+    fn from_str(content: &str) -> Result<Self, Self::Err> {
         let config: Config =
             toml::from_str(content).map_err(|e| anyhow::anyhow!("TOML parse error: {}", e))?;
         Ok(config)
     }
+}
 
+impl Config {
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let mut loading_stack = Vec::new();
         Self::from_file_internal(path.as_ref(), &mut loading_stack)
@@ -275,7 +279,7 @@ impl Config {
                 path_ref.display()
             )
         })?;
-            let mut config = Self::from_str(&content)?;
+            let mut config: Self = content.parse()?;
 
             // Resolve relative source paths against the config file's directory
             if let Some(config_dir) = path_ref.parent() {
@@ -447,10 +451,7 @@ impl Config {
             let mut retry_cmd = Command::new("git");
             retry_cmd.arg("clone").arg("--depth").arg("1");
             if let Some(branch) = &extend.branch {
-                retry_cmd
-                    .arg("--branch")
-                    .arg(branch)
-                    .arg("--single-branch");
+                retry_cmd.arg("--branch").arg(branch).arg("--single-branch");
             }
             retry_cmd.arg(&extend.repo).arg(repo_dir);
 
