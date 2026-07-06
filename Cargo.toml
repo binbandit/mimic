@@ -2,6 +2,12 @@
 name = "mimic"
 version = "0.1.0"
 edition = "2024"
+description = "Declarative dotfile management with symlinks, package installation, and drift detection"
+license = "MIT"
+repository = "https://github.com/binbandit/mimic"
+readme = "README.md"
+keywords = ["dotfiles", "cli", "symlink", "homebrew"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0"
