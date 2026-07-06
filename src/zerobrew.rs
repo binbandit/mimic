@@ -10,7 +10,13 @@ impl ZerobrewManager {
         Self
     }
 
-    pub fn list_installed(&self) -> Result<Vec<String>, anyhow::Error> {
+    /// Runs `zb list` and returns installed package names, or `Ok(None)` when
+    /// the zb executable itself is missing.
+    pub fn try_list_installed(&self) -> Result<Option<Vec<String>>, anyhow::Error> {
+        self.try_list()
+    }
+
+    fn try_list(&self) -> Result<Option<Vec<String>>, anyhow::Error> {
         let output = Command::new("zb").arg("list").output();
 
         match output {
@@ -21,23 +27,29 @@ impl ZerobrewManager {
                     .map(|line| line.trim().to_string())
                     .filter(|line| !line.is_empty())
                     .collect();
-                Ok(packages)
+                Ok(Some(packages))
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 Err(anyhow::anyhow!("zb list failed: {}", stderr))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(anyhow::anyhow!(
-                "zerobrew not found. Please install zerobrew from https://zerobrew.rs"
-            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(anyhow::anyhow!("Failed to execute zb: {}", e)),
         }
     }
 
-    /// Check if a package is installed.
+    pub fn list_installed(&self) -> Result<Vec<String>, anyhow::Error> {
+        self.try_list()?.ok_or_else(|| {
+            anyhow::anyhow!("zerobrew not found. Please install zerobrew from https://zerobrew.rs")
+        })
+    }
+
+    /// Check if a package is installed. A missing zb executable means the
+    /// package is not installed rather than an error.
     pub fn is_installed(&self, name: &str) -> Result<bool, anyhow::Error> {
-        let installed = self.list_installed()?;
-        Ok(installed.iter().any(|pkg| pkg == name))
+        Ok(self
+            .try_list()?
+            .is_some_and(|installed| installed.iter().any(|pkg| pkg == name)))
     }
 
     pub fn uninstall_many(&self, names: &[&str]) -> Result<Vec<String>, anyhow::Error> {
@@ -126,10 +138,7 @@ impl ZerobrewManager {
             if to_install.len() == 1 { "" } else { "s" }
         ));
 
-        let output = Command::new("zb")
-            .arg("install")
-            .args(&to_install)
-            .output();
+        let output = Command::new("zb").arg("install").args(&to_install).output();
 
         match output {
             Ok(output) if output.status.success() => {
@@ -148,6 +157,21 @@ impl ZerobrewManager {
                 Ok(installed_names)
             }
             Ok(output) => {
+                // A batch install can partially succeed (zb exits non-zero if
+                // any package fails). Record what actually made it onto disk so
+                // state stays accurate for undo/clean.
+                if let Ok(Some(now_installed)) = self.try_list() {
+                    for name in &to_install {
+                        if now_installed.iter().any(|pkg| pkg == name)
+                            && !state.packages.iter().any(|p| p.name == *name)
+                        {
+                            state.add_package(PackageState {
+                                name: name.to_string(),
+                                manager: "zb".to_string(),
+                            });
+                        }
+                    }
+                }
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let exit_code = output.status.code().unwrap_or(-1);
                 spinner.finish_with_error(format!("zb install failed (exit {})", exit_code));
@@ -199,6 +223,6 @@ mod tests {
 
     #[test]
     fn test_zerobrew_manager_default() {
-        let _manager = ZerobrewManager::default();
+        let _manager = ZerobrewManager;
     }
 }

@@ -40,8 +40,13 @@ impl MiseConfig {
                 .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
         }
 
+        // Write via temp file + rename so an interrupted write can't leave a
+        // truncated config for mise to choke on.
         let content = self.to_toml();
-        fs::write(path, content)
+        let temp_path = path.with_extension("toml.tmp");
+        fs::write(&temp_path, content)
+            .with_context(|| format!("Failed to write mise config: {}", temp_path.display()))?;
+        fs::rename(&temp_path, path)
             .with_context(|| format!("Failed to write mise config: {}", path.display()))?;
 
         Ok(())
@@ -55,8 +60,14 @@ impl MiseConfig {
     }
 }
 
+/// Quote any key that is not a valid TOML bare key. Notably a `.` in an
+/// unquoted key would create a nested table (`tools.foo.bar`) instead of a
+/// tool literally named `foo.bar`.
 fn needs_quoting(key: &str) -> bool {
-    key.contains(':') || key.contains('@') || key.contains('/') || key.contains('-')
+    key.is_empty()
+        || !key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 pub fn generate_mise_config(config: &crate::config::Config) -> Result<()> {

@@ -5,77 +5,100 @@ use std::process::Command;
 
 pub struct HomebrewManager;
 
+/// Runs `brew list <flag> -1` and returns the installed package names.
+/// Returns `Ok(None)` when the brew executable itself is missing, so callers
+/// can decide whether that is an error (install/uninstall) or simply means
+/// "nothing is installed" (diff/status on a machine without Homebrew).
+fn try_list_brew(flag: &str) -> Result<Option<Vec<String>>, anyhow::Error> {
+    let output = Command::new("brew")
+        .arg("list")
+        .arg(flag)
+        .arg("-1")
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let packages: Vec<String> = stdout
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect();
+            Ok(Some(packages))
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow::anyhow!("brew list {} failed: {}", flag, stderr))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(anyhow::anyhow!("Failed to execute brew: {}", e)),
+    }
+}
+
+fn brew_not_found() -> anyhow::Error {
+    anyhow::anyhow!("Homebrew not found. Please install Homebrew from https://brew.sh")
+}
+
 impl HomebrewManager {
     pub fn new() -> Self {
         Self
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>, anyhow::Error> {
-        let output = Command::new("brew")
-            .arg("list")
-            .arg("--formula")
-            .arg("-1")
-            .output();
-
-        match output {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let packages: Vec<String> = stdout
-                    .lines()
-                    .map(|line| line.trim().to_string())
-                    .filter(|line| !line.is_empty())
-                    .collect();
-                Ok(packages)
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(anyhow::anyhow!("brew list failed: {}", stderr))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(anyhow::anyhow!(
-                "Homebrew not found. Please install Homebrew from https://brew.sh"
-            )),
-            Err(e) => Err(anyhow::anyhow!("Failed to execute brew: {}", e)),
-        }
+        try_list_brew("--formula")?.ok_or_else(brew_not_found)
     }
 
     pub fn list_installed_casks(&self) -> Result<Vec<String>, anyhow::Error> {
-        let output = Command::new("brew")
-            .arg("list")
-            .arg("--cask")
-            .arg("-1")
-            .output();
+        try_list_brew("--cask")?.ok_or_else(brew_not_found)
+    }
+
+    /// Check if a formula is installed. A missing brew executable means the
+    /// formula is not installed rather than an error.
+    pub fn is_installed(&self, name: &str) -> Result<bool, anyhow::Error> {
+        Ok(try_list_brew("--formula")?
+            .is_some_and(|installed| installed.iter().any(|pkg| pkg == name)))
+    }
+
+    /// Check if a cask is installed. A missing brew executable means the
+    /// cask is not installed rather than an error.
+    pub fn is_installed_cask(&self, name: &str) -> Result<bool, anyhow::Error> {
+        Ok(try_list_brew("--cask")?
+            .is_some_and(|installed| installed.iter().any(|pkg| pkg == name)))
+    }
+
+    /// List installed formulae and casks together with two brew invocations.
+    /// Returns `Ok(None)` when the brew executable is missing.
+    pub fn list_installed_any(&self) -> Result<Option<Vec<String>>, anyhow::Error> {
+        let Some(mut packages) = try_list_brew("--formula")? else {
+            return Ok(None);
+        };
+        packages.extend(try_list_brew("--cask")?.unwrap_or_default());
+        Ok(Some(packages))
+    }
+
+    /// List leaf formulae — packages installed on request rather than as
+    /// dependencies of something else — via `brew leaves`. Comparing configs
+    /// against `brew list` would flag every auto-installed dependency as
+    /// "extra", so clean uses this instead.
+    pub fn list_leaves(&self) -> Result<Vec<String>, anyhow::Error> {
+        let output = Command::new("brew").arg("leaves").output();
 
         match output {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let packages: Vec<String> = stdout
+                Ok(stdout
                     .lines()
                     .map(|line| line.trim().to_string())
                     .filter(|line| !line.is_empty())
-                    .collect();
-                Ok(packages)
+                    .collect())
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(anyhow::anyhow!("brew list --cask failed: {}", stderr))
+                Err(anyhow::anyhow!("brew leaves failed: {}", stderr))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(anyhow::anyhow!(
-                "Homebrew not found. Please install Homebrew from https://brew.sh"
-            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(brew_not_found()),
             Err(e) => Err(anyhow::anyhow!("Failed to execute brew: {}", e)),
         }
-    }
-
-    /// Check if a formula is installed.
-    pub fn is_installed(&self, name: &str) -> Result<bool, anyhow::Error> {
-        let installed = self.list_installed()?;
-        Ok(installed.iter().any(|pkg| pkg == name))
-    }
-
-    /// Check if a cask is installed.
-    pub fn is_installed_cask(&self, name: &str) -> Result<bool, anyhow::Error> {
-        let installed = self.list_installed_casks()?;
-        Ok(installed.iter().any(|pkg| pkg == name))
     }
 
     /// Check if a package is installed, routing to formula or cask based on type.
@@ -249,6 +272,21 @@ impl HomebrewManager {
                 Ok(installed_names)
             }
             Ok(output) => {
+                // A batch install can partially succeed (brew exits non-zero if
+                // any formula fails). Record what actually made it onto disk so
+                // state stays accurate for undo/clean.
+                if let Ok(Some(now_installed)) = try_list_brew("--formula") {
+                    for name in &to_install {
+                        if now_installed.iter().any(|pkg| pkg == name)
+                            && !state.packages.iter().any(|p| p.name == *name)
+                        {
+                            state.add_package(PackageState {
+                                name: name.to_string(),
+                                manager: "brew".to_string(),
+                            });
+                        }
+                    }
+                }
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let exit_code = output.status.code().unwrap_or(-1);
                 spinner.finish_with_error(format!("brew install failed (exit {})", exit_code));
@@ -300,6 +338,6 @@ mod tests {
 
     #[test]
     fn test_homebrew_manager_default() {
-        let _manager = HomebrewManager::default();
+        let _manager = HomebrewManager;
     }
 }

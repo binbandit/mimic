@@ -3,7 +3,6 @@
 //! These tests use real git commands with actual test repositories.
 //! No mocking - tests verify actual git clone behavior.
 
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use std::path::PathBuf;
@@ -99,8 +98,7 @@ fn test_init_clones_repository() {
     let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Run mimic init with local repository path
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("init")
         .arg(repo_path.to_str().unwrap())
         .assert()
@@ -133,8 +131,7 @@ fn test_init_with_nonexistent_repo() {
     let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Run mimic init with nonexistent repository
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("init")
         .arg("https://github.com/nonexistent-user-12345/nonexistent-repo-67890.git")
         .assert()
@@ -158,8 +155,7 @@ fn test_init_with_existing_directory() {
     fs::create_dir_all(&repo_dir).expect("Failed to create repo dir");
 
     // Run mimic init - should fail because directory exists
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("init")
         .arg("https://github.com/example/repo.git")
         .assert()
@@ -198,8 +194,7 @@ fn test_init_creates_shallow_clone() {
     let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Run mimic init
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("init")
         .arg(repo_path.to_str().unwrap())
         .assert()
@@ -248,8 +243,7 @@ fn test_init_with_apply_flag() {
     let state_path = state_temp.path().join("state.toml");
 
     // Run mimic init with --apply flag
-    let output = Command::cargo_bin("mimic")
-        .unwrap()
+    let output = assert_cmd::cargo_bin_cmd!("mimic")
         .arg("init")
         .arg("--apply")
         .arg("--state")
@@ -301,8 +295,7 @@ fn test_init_verifies_directory_created() {
     );
 
     // Run mimic init
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("init")
         .arg(repo_path.to_str().unwrap())
         .assert()
@@ -329,8 +322,7 @@ fn test_init_output_format() {
     let repo_dir = get_and_clean_repo_dir(None).expect("Failed to get repo dir");
 
     // Run mimic init and capture output
-    let output = Command::cargo_bin("mimic")
-        .unwrap()
+    let output = assert_cmd::cargo_bin_cmd!("mimic")
         .arg("init")
         .arg(repo_path.to_str().unwrap())
         .assert()
@@ -393,8 +385,7 @@ fn test_init_with_branch_uses_branch_directory() {
         get_and_clean_repo_dir(Some("trial")).expect("Failed to get branch repo dir");
 
     // Run mimic init for specific branch
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("--branch")
         .arg("trial")
         .arg("init")

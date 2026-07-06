@@ -43,7 +43,7 @@ mod tests {
         )
         .unwrap();
 
-        let count = scan_for_secrets(&[test_file.clone()]).unwrap();
+        let count = scan_for_secrets(std::slice::from_ref(&test_file)).unwrap();
         assert_eq!(count, 0);
     }
 

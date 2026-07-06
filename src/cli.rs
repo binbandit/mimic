@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::config::{Config, should_apply_for_roles};
@@ -333,14 +333,10 @@ impl Cli {
         }
     }
 
-    /// Get the roles for the resolved host.
+    /// Get the roles for the resolved host, including inherited roles.
     fn get_host_roles(config: &Config, host_name: &Option<String>) -> Vec<String> {
         if let Some(name) = host_name {
-            config
-                .hosts
-                .get(name)
-                .map(|h| h.roles.clone())
-                .unwrap_or_default()
+            config.resolved_host_roles(name).unwrap_or_default()
         } else {
             vec![]
         }
@@ -348,13 +344,13 @@ impl Cli {
 
     /// Build a HostContext from the resolved host, with safe fallback.
     fn build_host_context(config: &Config, host_name: &Option<String>) -> HostContext {
-        if let Some(name) = host_name {
-            if let Some(host_config) = config.hosts.get(name) {
-                return HostContext {
-                    name: name.clone(),
-                    roles: host_config.roles.clone(),
-                };
-            }
+        if let Some(name) = host_name
+            && config.hosts.contains_key(name)
+        {
+            return HostContext {
+                name: name.clone(),
+                roles: config.resolved_host_roles(name).unwrap_or_default(),
+            };
         }
         HostContext {
             name: host_name.as_deref().unwrap_or("default").to_string(),
@@ -442,6 +438,14 @@ impl Cli {
         }
 
         Ok(())
+    }
+
+    /// Save state, printing a warning instead of failing. Used on early exits
+    /// from apply so already-completed work is never lost from tracking.
+    fn save_state_best_effort(state: &State, state_path: &Path) {
+        if let Err(e) = state.save(state_path) {
+            eprintln!("{} Failed to save state: {}", "Warning:".yellow(), e);
+        }
     }
 
     fn run_apply(&self) -> anyhow::Result<()> {
@@ -534,6 +538,9 @@ impl Cli {
                             .interact()?;
 
                         if !continue_on_error {
+                            // Persist what was already applied so undo/status
+                            // still know about it.
+                            Self::save_state_best_effort(&state, &state_path);
                             return Err(e);
                         }
                     }
@@ -598,6 +605,9 @@ impl Cli {
                             .interact()?;
 
                         if !continue_on_error {
+                            // Persist what was already applied so undo/status
+                            // still know about it.
+                            Self::save_state_best_effort(&state, &state_path);
                             return Err(errors.into_iter().next().unwrap().1);
                         }
                     }
@@ -625,6 +635,9 @@ impl Cli {
                             .interact()?;
 
                         if !continue_on_error {
+                            // Persist what was already applied so undo/status
+                            // still know about it.
+                            Self::save_state_best_effort(&state, &state_path);
                             return Err(e);
                         }
                     }
@@ -636,9 +649,7 @@ impl Cli {
         let zb_packages: Vec<&str> = normalized_packages
             .zerobrew
             .iter()
-            .filter(|p| {
-                should_apply_for_roles(&p.only_roles, &p.skip_roles, &host_ctx.roles)
-            })
+            .filter(|p| should_apply_for_roles(&p.only_roles, &p.skip_roles, &host_ctx.roles))
             .map(|p| p.name.as_str())
             .collect();
 
@@ -676,10 +687,24 @@ impl Cli {
                             .interact()?;
 
                         if !continue_on_error {
+                            // Persist what was already applied so undo/status
+                            // still know about it.
+                            Self::save_state_best_effort(&state, &state_path);
                             return Err(errors.into_iter().next().unwrap().1);
                         }
                     }
                 }
+            }
+        }
+
+        // Write the declared [mise] tools to mise's config before hooks run,
+        // so a `mise` hook installs the tool set from this apply, not a stale one.
+        if !config.mise.tools.is_empty() {
+            println!();
+            if let Err(e) = crate::mise::generate_mise_config(&config) {
+                eprintln!("  {} Failed to write mise config: {}", "✗".red(), e);
+                Self::save_state_best_effort(&state, &state_path);
+                return Err(e);
             }
         }
 
@@ -704,6 +729,9 @@ impl Cli {
                             .interact()?;
 
                         if !continue_on_error {
+                            // Persist what was already applied so undo/status
+                            // still know about it.
+                            Self::save_state_best_effort(&state, &state_path);
                             return Err(e);
                         }
                     }
@@ -847,58 +875,55 @@ impl Cli {
         let mut packages_ok = 0;
         let mut packages_drift = 0;
 
+        // Fetch each manager's installed list once instead of shelling out per
+        // package. Brew entries can be formulae or casks, so both lists are
+        // included. A missing manager binary means nothing is installed.
+        let brew_installed: Option<anyhow::Result<Vec<String>>> = state
+            .packages
+            .iter()
+            .any(|p| p.manager == "brew")
+            .then(|| homebrew.list_installed_any())
+            .map(|r| r.map(|opt| opt.unwrap_or_default()));
+        let zb_installed: Option<anyhow::Result<Vec<String>>> = state
+            .packages
+            .iter()
+            .any(|p| p.manager == "zb")
+            .then(|| zerobrew.try_list_installed())
+            .map(|r| r.map(|opt| opt.unwrap_or_default()));
+
         for package in &state.packages {
-            if package.manager == "brew" {
-                match homebrew.is_installed(&package.name) {
-                    Ok(true) => {
-                        packages_ok += 1;
-                        if self.verbose {
-                            println!("  {} brew: {}", "✓".green(), package.name);
-                        }
-                    }
-                    Ok(false) => {
-                        drift_details.push(format!(
-                            "  {} brew package not installed: {}",
-                            "✗".yellow(),
-                            package.name
-                        ));
-                        packages_drift += 1;
-                    }
-                    Err(e) => {
-                        drift_details.push(format!(
-                            "  {} error checking {}: {}",
-                            "✗".red(),
-                            package.name,
-                            e
-                        ));
-                        packages_drift += 1;
+            let lookup = match package.manager.as_str() {
+                "brew" => brew_installed.as_ref(),
+                "zb" => zb_installed.as_ref(),
+                _ => None,
+            };
+            let Some(result) = lookup else { continue };
+
+            match result {
+                Ok(installed) if installed.iter().any(|p| p == &package.name) => {
+                    packages_ok += 1;
+                    if self.verbose {
+                        println!("  {} {}: {}", "✓".green(), package.manager, package.name);
                     }
                 }
-            } else if package.manager == "zb" {
-                match zerobrew.is_installed(&package.name) {
-                    Ok(true) => {
-                        packages_ok += 1;
-                        if self.verbose {
-                            println!("  {} zb: {}", "✓".green(), package.name);
-                        }
-                    }
-                    Ok(false) => {
-                        drift_details.push(format!(
-                            "  {} zb package not installed: {}",
-                            "✗".yellow(),
-                            package.name
-                        ));
-                        packages_drift += 1;
-                    }
-                    Err(e) => {
-                        drift_details.push(format!(
-                            "  {} error checking {} (zb): {}",
-                            "✗".red(),
-                            package.name,
-                            e
-                        ));
-                        packages_drift += 1;
-                    }
+                Ok(_) => {
+                    drift_details.push(format!(
+                        "  {} {} package not installed: {}",
+                        "✗".yellow(),
+                        package.manager,
+                        package.name
+                    ));
+                    packages_drift += 1;
+                }
+                Err(e) => {
+                    drift_details.push(format!(
+                        "  {} error checking {} ({}): {}",
+                        "✗".red(),
+                        package.name,
+                        package.manager,
+                        e
+                    ));
+                    packages_drift += 1;
                 }
             }
         }
@@ -962,6 +987,30 @@ impl Cli {
         Ok(())
     }
 
+    /// Check whether `target` is still the symlink mimic created for this
+    /// state entry, i.e. it points at the recorded source or rendered file.
+    fn is_mimic_symlink(target: &Path, dotfile: &crate::state::DotfileState) -> bool {
+        if !target.is_symlink() {
+            return false;
+        }
+        let Ok(dest) = std::fs::read_link(target) else {
+            return false;
+        };
+        let matches = |recorded: &str| {
+            if dest == Path::new(recorded) {
+                return true;
+            }
+            match (
+                std::fs::canonicalize(&dest),
+                std::fs::canonicalize(recorded),
+            ) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            }
+        };
+        matches(&dotfile.source) || dotfile.rendered_path.as_deref().is_some_and(matches)
+    }
+
     fn run_undo(&self) -> anyhow::Result<()> {
         let state_path = self.get_state_path();
 
@@ -999,23 +1048,33 @@ impl Cli {
                 println!("  {} {}", "Processing:".bright_black(), target.display());
             }
 
+            // Only remove the target if it is still the symlink mimic created
+            // (pointing at the recorded source or rendered file). If the user
+            // replaced it with a real file/directory or a different link,
+            // leave it alone instead of destroying their data.
+            let mut target_slot_free = true;
             if target.exists() || target.is_symlink() {
-                let remove_result = if target.is_dir() && !target.is_symlink() {
-                    std::fs::remove_dir_all(&target)
+                if Self::is_mimic_symlink(&target, dotfile) {
+                    match std::fs::remove_file(&target) {
+                        Ok(()) => {
+                            symlinks_removed += 1;
+                            println!("  {} Removed symlink: {}", "✓".green(), target.display());
+                        }
+                        Err(e) => {
+                            target_slot_free = false;
+                            let error_msg =
+                                format!("Failed to remove symlink {}: {}", target.display(), e);
+                            eprintln!("  {} {}", "✗".red(), error_msg);
+                            errors.push(error_msg);
+                        }
+                    }
                 } else {
-                    std::fs::remove_file(&target)
-                };
-                match remove_result {
-                    Ok(()) => {
-                        symlinks_removed += 1;
-                        println!("  {} Removed symlink: {}", "✓".green(), target.display());
-                    }
-                    Err(e) => {
-                        let error_msg =
-                            format!("Failed to remove symlink {}: {}", target.display(), e);
-                        eprintln!("  {} {}", "✗".red(), error_msg);
-                        errors.push(error_msg);
-                    }
+                    target_slot_free = false;
+                    println!(
+                        "  {} Skipping {}: no longer a mimic-managed symlink (modified outside mimic)",
+                        "⚠".yellow(),
+                        target.display()
+                    );
                 }
             } else if self.verbose {
                 println!(
@@ -1023,6 +1082,19 @@ impl Cli {
                     "○".bright_black(),
                     target.display()
                 );
+            }
+
+            if !target_slot_free {
+                // Don't restore a backup over something we refused to remove.
+                if dotfile.backup_path.is_some() {
+                    println!(
+                        "  {} Backup for {} left in place: {}",
+                        "○".bright_black(),
+                        target.display(),
+                        dotfile.backup_path.as_deref().unwrap_or_default()
+                    );
+                }
+                continue;
             }
 
             if let Some(backup_path_str) = &dotfile.backup_path {
@@ -1040,21 +1112,20 @@ impl Cli {
                             backups_restored += 1;
                             // Clean up the backup file after successful restore
                             // (rename already moved it; copy leaves it behind)
-                            if backup_path.exists() {
-                                if let Err(e) = if backup_path.is_dir() {
+                            if backup_path.exists()
+                                && let Err(e) = if backup_path.is_dir() {
                                     std::fs::remove_dir_all(&backup_path)
                                 } else {
                                     std::fs::remove_file(&backup_path)
-                                } {
-                                    if self.verbose {
-                                        eprintln!(
-                                            "  {} Could not remove backup file {}: {}",
-                                            "⚠".yellow(),
-                                            backup_path.display(),
-                                            e
-                                        );
-                                    }
                                 }
+                                && self.verbose
+                            {
+                                eprintln!(
+                                    "  {} Could not remove backup file {}: {}",
+                                    "⚠".yellow(),
+                                    backup_path.display(),
+                                    e
+                                );
                             }
                             println!(
                                 "  {} Restored backup: {} → {}",
@@ -1259,7 +1330,9 @@ impl Cli {
                         key.to_uppercase()
                     };
 
-                    println!("export {}=\"{}\"", env_var, value);
+                    // Single-quote the value so shell metacharacters in the
+                    // secret ($, `, ", \) survive `eval "$(mimic secrets export)"`.
+                    println!("export {}='{}'", env_var, value.replace('\'', r"'\''"));
                 }
 
                 Ok(())
@@ -1317,9 +1390,16 @@ impl Cli {
 
                 Self::try_git_clone(repo, &repo_dir, self.branch.as_deref())
                     .map_err(|retry_err| {
+                        // Strip the internal retry marker so it never reaches
+                        // the user-facing message.
+                        let msg = retry_err.to_string();
+                        let msg = msg
+                            .strip_prefix("__auth_retry__: ")
+                            .unwrap_or(&msg)
+                            .to_string();
                         anyhow::anyhow!(
                             "Git clone failed after authentication\n\n{}\n\nTo fix:\n  - Verify you have access to the repository\n  - Try cloning manually: {}",
-                            retry_err,
+                            msg,
                             Self::manual_clone_command(repo, self.branch.as_deref())
                         )
                     })?;
@@ -1485,18 +1565,11 @@ impl Cli {
         use std::env;
         use std::process::Command;
 
-        let expanded_target = if target.starts_with("~/") {
-            if let Some(home) = directories::BaseDirs::new() {
-                home.home_dir()
-                    .join(&target[2..])
-                    .to_string_lossy()
-                    .to_string()
-            } else {
-                target.to_string()
-            }
-        } else {
-            target.to_string()
-        };
+        // Use the same expansion rules as apply (~ and env vars) so lookups
+        // match the fully-expanded targets stored in state.
+        let expanded_target = crate::expand::expand_path_str(target)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| target.to_string());
 
         let state_path = self.get_state_path();
         let mut source_path: Option<String> = None;
@@ -1525,18 +1598,9 @@ impl Cli {
             let config = Config::from_file(&config_path)?;
 
             for dotfile in &config.dotfiles {
-                let config_target = if dotfile.target.starts_with("~/") {
-                    if let Some(home) = directories::BaseDirs::new() {
-                        home.home_dir()
-                            .join(&dotfile.target[2..])
-                            .to_string_lossy()
-                            .to_string()
-                    } else {
-                        dotfile.target.clone()
-                    }
-                } else {
-                    dotfile.target.clone()
-                };
+                let config_target = crate::expand::expand_path_str(&dotfile.target)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| dotfile.target.clone());
 
                 if config_target == expanded_target || dotfile.target == target {
                     // Source paths are already resolved to absolute by Config::from_file
@@ -1604,27 +1668,36 @@ impl Cli {
     fn run_clean(&self) -> anyhow::Result<()> {
         let (config, _host_name) = self.resolve_config_and_host()?;
 
+        // Config entries may use tap-qualified names (sometap/foo); brew
+        // reports short names, so compare on the final path segment.
+        fn short_name(name: &str) -> &str {
+            name.rsplit('/').next().unwrap_or(name)
+        }
+
         let normalized = config.packages.normalized();
-        let config_formulas: std::collections::HashSet<String> = normalized
+        let config_formulas: std::collections::HashSet<&str> = normalized
             .homebrew
             .iter()
             .filter(|p| p.pkg_type == "formula")
-            .map(|p| p.name.clone())
+            .map(|p| short_name(&p.name))
             .collect();
-        let config_casks: std::collections::HashSet<String> = normalized
+        let config_casks: std::collections::HashSet<&str> = normalized
             .homebrew
             .iter()
             .filter(|p| p.pkg_type == "cask")
-            .map(|p| p.name.clone())
+            .map(|p| short_name(&p.name))
             .collect();
-        let config_zb: std::collections::HashSet<String> = normalized
+        let config_zb: std::collections::HashSet<&str> = normalized
             .zerobrew
             .iter()
-            .map(|p| p.name.clone())
+            .map(|p| short_name(&p.name))
             .collect();
 
         let homebrew = HomebrewManager::new();
-        let installed_formulas = homebrew.list_installed()?;
+        // Only leaves count as removable: `brew list` includes auto-installed
+        // dependencies, which must not be uninstalled out from under the
+        // configured packages that need them.
+        let installed_formulas = homebrew.list_leaves()?;
         let installed_casks = homebrew.list_installed_casks()?;
 
         let extra_formulas: Vec<&String> = installed_formulas
@@ -1643,7 +1716,7 @@ impl Cli {
             zerobrew
                 .list_installed()?
                 .into_iter()
-                .filter(|p| !config_zb.contains(p.as_str()))
+                .filter(|p| !config_zb.contains(short_name(p)))
                 .collect()
         } else {
             Vec::new()
@@ -1675,21 +1748,9 @@ impl Cli {
             extra_zb.len()
         );
 
-        if !self.yes {
-            use dialoguer::Confirm;
-            let confirmed = Confirm::new()
-                .with_prompt("Uninstall these packages?")
-                .default(false)
-                .interact()?;
-
-            if !confirmed {
-                println!("{}", "Cancelled.".bright_black());
-                return Ok(());
-            }
-        }
-
         let total = extra_formulas.len() + extra_casks.len() + extra_zb.len();
 
+        // Dry run is a preview: never prompt, never touch anything.
         if self.dry_run {
             println!();
             for name in &extra_formulas {
@@ -1715,9 +1776,24 @@ impl Cli {
             return Ok(());
         }
 
+        if !self.yes {
+            use dialoguer::Confirm;
+            let confirmed = Confirm::new()
+                .with_prompt("Uninstall these packages?")
+                .default(false)
+                .interact()?;
+
+            if !confirmed {
+                println!("{}", "Cancelled.".bright_black());
+                return Ok(());
+            }
+        }
+
         println!();
         let mut all_brew: Vec<&str> = extra_formulas.iter().map(|s| s.as_str()).collect();
         all_brew.extend(extra_casks.iter().map(|s| s.as_str()));
+
+        let mut uninstall_errors: Vec<anyhow::Error> = Vec::new();
 
         if !all_brew.is_empty() {
             match homebrew.uninstall_many(&all_brew) {
@@ -1736,6 +1812,7 @@ impl Cli {
                             .red()
                             .bold()
                     );
+                    uninstall_errors.push(e);
                 }
             }
         }
@@ -1758,8 +1835,16 @@ impl Cli {
                             .red()
                             .bold()
                     );
+                    uninstall_errors.push(e);
                 }
             }
+        }
+
+        if !uninstall_errors.is_empty() {
+            return Err(anyhow::anyhow!(
+                "clean finished with {} error(s); see output above",
+                uninstall_errors.len()
+            ));
         }
 
         Ok(())

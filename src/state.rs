@@ -83,13 +83,23 @@ impl State {
     }
 
     /// Add or update a dotfile in the state.
-    /// If a dotfile with the same target already exists, it is replaced.
-    pub fn add_dotfile(&mut self, dotfile: DotfileState) {
+    /// If a dotfile with the same target already exists, it is updated.
+    /// A `None` backup_path/rendered_path on the incoming entry means "nothing
+    /// new was recorded this apply", so the existing values are preserved —
+    /// otherwise an idempotent re-apply would wipe the backup pointer and
+    /// `undo` could no longer restore the user's original file.
+    pub fn add_dotfile(&mut self, mut dotfile: DotfileState) {
         if let Some(existing) = self
             .dotfiles
             .iter_mut()
             .find(|d| d.target == dotfile.target)
         {
+            if dotfile.backup_path.is_none() {
+                dotfile.backup_path = existing.backup_path.take();
+            }
+            if dotfile.rendered_path.is_none() {
+                dotfile.rendered_path = existing.rendered_path.take();
+            }
             *existing = dotfile;
         } else {
             self.dotfiles.push(dotfile);
@@ -108,9 +118,10 @@ impl State {
         self.applied_at = Utc::now();
     }
 
-    /// Remove a dotfile by source path
-    pub fn remove_dotfile(&mut self, source: &str) {
-        self.dotfiles.retain(|d| d.source != source);
+    /// Remove a dotfile by target path. Target is the unique key for dotfile
+    /// entries (see `add_dotfile`); several targets may share one source.
+    pub fn remove_dotfile(&mut self, target: &str) {
+        self.dotfiles.retain(|d| d.target != target);
         self.applied_at = Utc::now();
     }
 

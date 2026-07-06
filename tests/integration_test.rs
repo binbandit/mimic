@@ -1,4 +1,3 @@
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
@@ -39,8 +38,7 @@ target = "{}"
     .unwrap();
 
     // Run apply with --yes to skip prompts
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -63,8 +61,7 @@ target = "{}"
     assert!(state_path.exists());
 
     // Run status to verify all in sync
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("status")
         .arg("--state")
         .arg(&state_path)
@@ -121,8 +118,7 @@ target = "{}"
     .unwrap();
 
     // Run apply with --yes (auto-backup conflicts)
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -185,8 +181,7 @@ target = "{}"
     .unwrap();
 
     // Initial apply
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -200,8 +195,7 @@ target = "{}"
     fs::remove_file(&target_path).unwrap();
 
     // Run status - should detect drift
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("status")
         .arg("--state")
         .arg(&state_path)
@@ -211,8 +205,7 @@ target = "{}"
         .stdout(predicate::str::contains("missing"));
 
     // Run apply to fix drift
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -223,8 +216,7 @@ target = "{}"
         .success();
 
     // Run status again - should be in sync
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("status")
         .arg("--state")
         .arg(&state_path)
@@ -273,8 +265,7 @@ target = "{}"
     .unwrap();
 
     // Apply (creates backup)
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -288,8 +279,7 @@ target = "{}"
     assert!(target_path.is_symlink());
 
     // Run undo
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("undo")
         .arg("--state")
         .arg(&state_path)
@@ -308,8 +298,7 @@ target = "{}"
     assert_eq!(restored_content, "original content");
 
     // Run undo again - should say nothing to undo
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("undo")
         .arg("--state")
         .arg(&state_path)
@@ -353,8 +342,7 @@ target = "{}"
     .unwrap();
 
     // Run apply with --dry-run
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -410,8 +398,7 @@ target = "{}"
     .unwrap();
 
     // Apply config
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -458,8 +445,7 @@ target = "{}"
     )
     .unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -470,8 +456,7 @@ target = "{}"
         .success();
 
     // Step 2: Verify status shows in sync
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("status")
         .arg("--state")
         .arg(&state_path)
@@ -502,8 +487,7 @@ target = "{}"
     .unwrap();
 
     // Step 4: Run diff to preview changes
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("diff")
         .arg("--config")
         .arg(&config_path)
@@ -512,8 +496,7 @@ target = "{}"
         .stdout(predicate::str::contains("file2.conf"));
 
     // Step 5: Apply updated config
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -528,8 +511,7 @@ target = "{}"
     assert!(target2.is_symlink());
 
     // Step 6: Undo everything
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("undo")
         .arg("--state")
         .arg(&state_path)
@@ -579,8 +561,7 @@ target = "{}"
     )
     .unwrap();
 
-    let output = Command::cargo_bin("mimic")
-        .unwrap()
+    let output = assert_cmd::cargo_bin_cmd!("mimic")
         .arg("diff")
         .arg("--config")
         .arg(&config_path)
@@ -615,8 +596,7 @@ target = "/tmp/target.conf"
     )
     .unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -631,8 +611,7 @@ target = "/tmp/target.conf"
     let bad_config_path = temp_path.join("bad.toml");
     fs::write(&bad_config_path, "[[dotfiles]\nmissing = bracket").unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&bad_config_path)
@@ -669,8 +648,7 @@ target = "{}"
     )
     .unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -680,8 +658,7 @@ target = "{}"
         .assert()
         .success();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("status")
         .arg("--state")
         .arg(&state_path)
@@ -719,8 +696,7 @@ target = "{}"
     )
     .unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -756,8 +732,7 @@ target = "{}"
     )
     .unwrap();
 
-    let output = Command::cargo_bin("mimic")
-        .unwrap()
+    let output = assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -815,8 +790,7 @@ target = "{}"
     )
     .unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -859,8 +833,7 @@ target = "{}"
     )
     .unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -914,8 +887,7 @@ target = "{}"
     // Run apply from a completely different working directory (temp_path, NOT config_dir)
     // This would have failed before the fix because "dotfiles/test.conf" would resolve
     // against CWD instead of the config file's directory.
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)
@@ -964,8 +936,7 @@ target = "{}"
     .unwrap();
 
     // Run diff from a different directory
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("diff")
         .arg("--config")
         .arg(&config_path)
@@ -1005,8 +976,7 @@ target = "{}"
     )
     .unwrap();
 
-    Command::cargo_bin("mimic")
-        .unwrap()
+    assert_cmd::cargo_bin_cmd!("mimic")
         .arg("apply")
         .arg("--config")
         .arg(&config_path)

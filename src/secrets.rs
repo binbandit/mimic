@@ -102,19 +102,15 @@ pub fn get_secret(key: &str) -> Result<String> {
 /// Returns an error if the keychain query fails.
 pub fn list_secrets() -> Result<Vec<String>> {
     check_platform()?;
-
-    let output = Command::new("security")
-        .args(["find-generic-password", "-s", SERVICE_NAME, "-a"])
-        .output();
-
-    if output.is_err() || !output.as_ref().unwrap().status.success() {
-        return list_secrets_via_dump();
-    }
-
     list_secrets_via_dump()
 }
 
 /// List secrets by dumping keychain and parsing output.
+///
+/// Entries in `security dump-keychain` output start with a `keychain:` line
+/// and list their attributes in sorted order, so `"acct"` appears before
+/// `"svce"`. The parser therefore collects both per entry and decides when
+/// the next entry begins (or at end of input).
 fn list_secrets_via_dump() -> Result<Vec<String>> {
     let output = Command::new("security")
         .args(["dump-keychain"])
@@ -124,44 +120,45 @@ fn list_secrets_via_dump() -> Result<Vec<String>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let mut secrets = Vec::new();
-    let mut in_mimic_entry = false;
-    let mut current_account = None;
+    let mut current_account: Option<String> = None;
+    let mut current_service: Option<String> = None;
 
     for line in stdout.lines() {
-        if line.contains("\"svce\"<blob>") && line.contains(SERVICE_NAME) {
-            in_mimic_entry = true;
-        }
-
-        if in_mimic_entry
-            && line.contains("\"acct\"<blob>=")
-            && let Some(account) = extract_account_name(line)
-        {
-            current_account = Some(account);
-        }
-
-        if line.trim() == "}" {
-            if let Some(account) = current_account.take() {
+        if line.starts_with("keychain:") {
+            // New entry: flush the previous one.
+            if current_service.as_deref() == Some(SERVICE_NAME)
+                && let Some(account) = current_account.take()
+            {
                 secrets.push(account);
             }
-            in_mimic_entry = false;
+            current_account = None;
+            current_service = None;
         }
+
+        if let Some(account) = extract_blob_attr(line, "acct") {
+            current_account = Some(account);
+        }
+        if let Some(service) = extract_blob_attr(line, "svce") {
+            current_service = Some(service);
+        }
+    }
+
+    if current_service.as_deref() == Some(SERVICE_NAME)
+        && let Some(account) = current_account.take()
+    {
+        secrets.push(account);
     }
 
     Ok(secrets)
 }
 
-fn extract_account_name(line: &str) -> Option<String> {
-    // Format: "acct"<blob>="account_name"
-    if let Some(start) = line.find("\"acct\"<blob>=") {
-        let rest = &line[start + 13..]; // Skip past "acct"<blob>=
-        if let Some(quote_start) = rest.find('"') {
-            let after_quote = &rest[quote_start + 1..];
-            if let Some(quote_end) = after_quote.find('"') {
-                return Some(after_quote[..quote_end].to_string());
-            }
-        }
-    }
-    None
+/// Extract a quoted `<blob>` attribute value, e.g. `"acct"<blob>="name"`.
+fn extract_blob_attr(line: &str, attr: &str) -> Option<String> {
+    let prefix = format!("\"{}\"<blob>=", attr);
+    let start = line.find(&prefix)?;
+    let rest = line[start + prefix.len()..].strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 /// Remove a secret from macOS Keychain.
@@ -255,21 +252,21 @@ mod tests {
     #[test]
     fn test_extract_account_name() {
         let line = r#"    "acct"<blob>="my_secret_key""#;
-        let result = extract_account_name(line);
+        let result = extract_blob_attr(line, "acct");
         assert_eq!(result, Some("my_secret_key".to_string()));
     }
 
     #[test]
     fn test_extract_account_name_with_underscores() {
         let line = r#"    "acct"<blob>="openai_api_key""#;
-        let result = extract_account_name(line);
+        let result = extract_blob_attr(line, "acct");
         assert_eq!(result, Some("openai_api_key".to_string()));
     }
 
     #[test]
     fn test_extract_account_name_no_match() {
         let line = r#"    "svce"<blob>="mimic""#;
-        let result = extract_account_name(line);
+        let result = extract_blob_attr(line, "acct");
         assert_eq!(result, None);
     }
 

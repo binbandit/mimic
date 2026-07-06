@@ -1,7 +1,7 @@
 //! Spinner utilities for progress indication
 //!
 //! This module provides reusable spinner infrastructure with CI/TTY detection.
-//! Spinners are automatically hidden in CI environments or when stdout is not a TTY.
+//! Spinners are automatically hidden in CI environments or when stderr is not a TTY.
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::{Duration, Instant};
@@ -131,8 +131,15 @@ impl Default for SpinnerManager {
 ///
 /// Returns false if:
 /// - CI environment variable is set
-/// - stdout is not a TTY (using atty would require additional dep, so we check CI only for now)
+/// - stderr is not a TTY (indicatif draws to stderr)
 fn should_show_spinner() -> bool {
+    use std::io::IsTerminal;
+    spinner_env_allows() && std::io::stderr().is_terminal()
+}
+
+/// Environment (CI) half of the spinner gate, separate from the TTY check so
+/// it can be tested regardless of how test output is captured.
+fn spinner_env_allows() -> bool {
     std::env::var("CI").is_err()
 }
 
@@ -169,7 +176,7 @@ mod tests {
             std::env::set_var("CI", "true");
         }
         assert!(
-            !should_show_spinner(),
+            !spinner_env_allows(),
             "Spinner should be hidden in CI environment"
         );
 
@@ -190,7 +197,7 @@ mod tests {
             std::env::remove_var("CI");
         }
         assert!(
-            should_show_spinner(),
+            spinner_env_allows(),
             "Spinner should be shown when not in CI"
         );
 

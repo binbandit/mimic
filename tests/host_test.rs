@@ -295,7 +295,7 @@ fn test_complex_multi_host_scenario() {
         work.variables.get("http_proxy").unwrap(),
         "http://localhost:3128"
     );
-    assert!(work.variables.get("openai_model").is_none());
+    assert!(!work.variables.contains_key("openai_model"));
     assert_eq!(work.dotfiles.len(), 2);
     assert_eq!(work.packages.homebrew.len(), 2);
     assert!(work.packages.homebrew.iter().any(|p| p.name == "git"));
@@ -319,4 +319,122 @@ fn test_host_variable_override() {
 
     assert_eq!(merged.variables.get("editor").unwrap(), "emacs");
     assert_eq!(merged.variables.get("theme").unwrap(), "dark");
+}
+
+#[test]
+fn test_host_inherits_parent_variables_and_roles() {
+    let config_str = r#"
+        [variables]
+        editor = "vi"
+
+        [hosts.base-mac]
+        roles = ["mac"]
+        [hosts.base-mac.variables]
+        editor = "nvim"
+        shell = "zsh"
+
+        [hosts.work-laptop]
+        inherits = "base-mac"
+        roles = ["work"]
+        [hosts.work-laptop.variables]
+        editor = "hx"
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    let merged = config.with_host("work-laptop").unwrap();
+
+    // Child overrides parent, parent overrides base
+    assert_eq!(merged.variables.get("editor").unwrap(), "hx");
+    // Inherited from parent host
+    assert_eq!(merged.variables.get("shell").unwrap(), "zsh");
+
+    // Roles include the whole chain
+    let roles = config.resolved_host_roles("work-laptop").unwrap();
+    assert!(roles.contains(&"mac".to_string()));
+    assert!(roles.contains(&"work".to_string()));
+}
+
+#[test]
+fn test_host_inherits_dotfiles_and_packages() {
+    let config_str = r#"
+        [hosts.base]
+        [[hosts.base.dotfiles]]
+        source = "/dotfiles/zshrc"
+        target = "~/.zshrc"
+
+        [[hosts.base.packages.homebrew]]
+        name = "git"
+        type = "formula"
+
+        [hosts.child]
+        inherits = "base"
+        [[hosts.child.packages.homebrew]]
+        name = "ripgrep"
+        type = "formula"
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    let merged = config.with_host("child").unwrap();
+
+    assert!(merged.dotfiles.iter().any(|d| d.target == "~/.zshrc"));
+    assert!(merged.packages.homebrew.iter().any(|p| p.name == "git"));
+    assert!(merged.packages.homebrew.iter().any(|p| p.name == "ripgrep"));
+}
+
+#[test]
+fn test_host_inherits_cycle_is_error() {
+    let config_str = r#"
+        [hosts.a]
+        inherits = "b"
+
+        [hosts.b]
+        inherits = "a"
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    let err = config.with_host("a").unwrap_err().to_string();
+    assert!(err.contains("Cyclic host inheritance"), "got: {}", err);
+}
+
+#[test]
+fn test_host_inherits_unknown_parent_is_error() {
+    let config_str = r#"
+        [hosts.a]
+        inherits = "nonexistent"
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    let err = config.with_host("a").unwrap_err().to_string();
+    assert!(err.contains("inherits unknown host"), "got: {}", err);
+}
+
+#[test]
+fn test_host_package_overrides_base_entry() {
+    let config_str = r#"
+        [[packages.homebrew]]
+        name = "docker"
+        type = "formula"
+
+        [hosts.work]
+        [[hosts.work.packages.homebrew]]
+        name = "docker"
+        type = "formula"
+        only_roles = ["work"]
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    let merged = config.with_host("work").unwrap();
+
+    let docker: Vec<_> = merged
+        .packages
+        .homebrew
+        .iter()
+        .filter(|p| p.name == "docker")
+        .collect();
+    assert_eq!(docker.len(), 1, "host entry must replace, not duplicate");
+    assert_eq!(
+        docker[0].only_roles.as_deref(),
+        Some(&["work".to_string()][..]),
+        "the host's role restriction must win over the base entry"
+    );
 }

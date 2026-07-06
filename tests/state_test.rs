@@ -68,7 +68,7 @@ fn test_state_add_remove_dotfile() {
     assert_eq!(state.dotfiles.len(), 1);
 
     // Remove dotfile
-    state.remove_dotfile("~/.bashrc");
+    state.remove_dotfile("/home/user/.bashrc");
 
     assert_eq!(state.dotfiles.len(), 0);
 }
@@ -107,7 +107,7 @@ fn test_state_atomic_write() {
     let tmp_files: Vec<_> = fs::read_dir(temp_dir.path())
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "tmp"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "tmp"))
         .collect();
 
     assert_eq!(tmp_files.len(), 0, "Temporary files should be cleaned up");
@@ -134,8 +134,61 @@ fn test_state_multiple_dotfiles() {
     assert_eq!(state.dotfiles.len(), 5);
 
     // Remove one
-    state.remove_dotfile("~/.config/file2");
+    state.remove_dotfile("/home/user/.config/file2");
 
     assert_eq!(state.dotfiles.len(), 4);
     assert!(!state.dotfiles.iter().any(|d| d.source == "~/.config/file2"));
+}
+
+#[test]
+fn test_add_dotfile_preserves_backup_path_on_reapply() {
+    let mut state = State::new();
+
+    // First apply records a backup
+    state.add_dotfile(DotfileState {
+        source: "/dotfiles/zshrc".to_string(),
+        target: "/home/user/.zshrc".to_string(),
+        backup_path: Some("/home/user/.zshrc.backup.20240101".to_string()),
+        rendered_path: None,
+    });
+
+    // Idempotent re-apply has nothing new to record
+    state.add_dotfile(DotfileState {
+        source: "/dotfiles/zshrc".to_string(),
+        target: "/home/user/.zshrc".to_string(),
+        backup_path: None,
+        rendered_path: None,
+    });
+
+    assert_eq!(state.dotfiles.len(), 1);
+    assert_eq!(
+        state.dotfiles[0].backup_path.as_deref(),
+        Some("/home/user/.zshrc.backup.20240101"),
+        "re-apply must not wipe the recorded backup, or undo cannot restore the original file"
+    );
+}
+
+#[test]
+fn test_add_dotfile_new_backup_replaces_old() {
+    let mut state = State::new();
+
+    state.add_dotfile(DotfileState {
+        source: "/dotfiles/zshrc".to_string(),
+        target: "/home/user/.zshrc".to_string(),
+        backup_path: Some("/home/user/.zshrc.backup.old".to_string()),
+        rendered_path: None,
+    });
+
+    state.add_dotfile(DotfileState {
+        source: "/dotfiles/zshrc".to_string(),
+        target: "/home/user/.zshrc".to_string(),
+        backup_path: Some("/home/user/.zshrc.backup.new".to_string()),
+        rendered_path: None,
+    });
+
+    assert_eq!(state.dotfiles.len(), 1);
+    assert_eq!(
+        state.dotfiles[0].backup_path.as_deref(),
+        Some("/home/user/.zshrc.backup.new")
+    );
 }

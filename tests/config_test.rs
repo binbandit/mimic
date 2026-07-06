@@ -1,5 +1,6 @@
 use mimic::config::Config;
 use std::path::Path;
+use std::str::FromStr;
 
 #[test]
 fn test_parse_valid_config() {

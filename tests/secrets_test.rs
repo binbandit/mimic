@@ -6,7 +6,6 @@
 #[cfg(test)]
 mod secrets_tests {
     use mimic::secrets::*;
-    use std::collections::HashMap;
 
     const TEST_KEY: &str = "mimic_test_secret";
     const TEST_VALUE: &str = "test_secret_value_123";
