@@ -384,6 +384,7 @@ impl Config {
     }
 
     fn ensure_extended_repo(extend: &ExtendsRepo) -> anyhow::Result<PathBuf> {
+        use anyhow::Context;
         let base_dirs = directories::BaseDirs::new()
             .ok_or_else(|| anyhow::anyhow!("Failed to determine home directory"))?;
 
@@ -394,6 +395,17 @@ impl Config {
                 &extend.repo,
                 extend.branch.as_deref(),
             ));
+
+        // A leftover directory from an interrupted clone isn't a usable repo;
+        // remove it and re-clone instead of failing `git pull` forever.
+        if repo_dir.exists() && !repo_dir.join(".git").exists() {
+            fs::remove_dir_all(&repo_dir).with_context(|| {
+                format!(
+                    "Failed to remove invalid extends cache: {}\n\nTo fix:\n  - Remove it manually and re-run",
+                    repo_dir.display()
+                )
+            })?;
+        }
 
         if repo_dir.exists() {
             Self::git_update_extended_repo(&repo_dir, extend)?;
@@ -464,6 +476,9 @@ impl Config {
             }
 
             let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+            if repo_dir.exists() {
+                fs::remove_dir_all(repo_dir).ok();
+            }
             return Err(anyhow::anyhow!(Self::format_extended_repo_error(
                 "clone",
                 extend,
@@ -471,6 +486,11 @@ impl Config {
             )));
         }
 
+        // Don't leave a partial checkout behind — it would make every future
+        // run try `git pull` against a broken directory.
+        if repo_dir.exists() {
+            fs::remove_dir_all(repo_dir).ok();
+        }
         Err(anyhow::anyhow!(Self::format_extended_repo_error(
             "clone", extend, &stderr
         )))
@@ -501,6 +521,42 @@ impl Config {
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Credentials can expire after the initial clone succeeded — re-auth
+        // and retry once, mirroring the clone path.
+        if crate::git_auth::is_auth_error(&stderr) {
+            crate::git_auth::ensure_gh_auth()?;
+
+            let mut retry_cmd = Command::new("git");
+            retry_cmd
+                .arg("-C")
+                .arg(repo_dir)
+                .arg("pull")
+                .arg("--ff-only");
+            if let Some(branch) = &extend.branch {
+                retry_cmd.arg("origin").arg(branch);
+            }
+
+            let retry_output = retry_cmd.output().map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to execute git pull for extended repo '{}': {}",
+                    extend.repo,
+                    e
+                )
+            })?;
+
+            if retry_output.status.success() {
+                return Ok(());
+            }
+
+            let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+            return Err(anyhow::anyhow!(Self::format_extended_repo_error(
+                "update",
+                extend,
+                &retry_stderr
+            )));
+        }
+
         Err(anyhow::anyhow!(Self::format_extended_repo_error(
             "update", extend, &stderr
         )))
@@ -576,45 +632,105 @@ impl Config {
         }
     }
 
-    /// Merge the base config with a specific host configuration
+    /// Resolve a host's inheritance chain: furthest ancestor first, the
+    /// requested host last. Errors on unknown hosts and inheritance cycles.
+    fn host_chain(&self, host_name: &str) -> anyhow::Result<Vec<&HostConfig>> {
+        let mut chain = Vec::new();
+        let mut visited: Vec<String> = Vec::new();
+        let mut current = host_name;
+
+        loop {
+            let host = self
+                .hosts
+                .get(current)
+                .ok_or_else(|| match visited.last() {
+                    None => anyhow::anyhow!("Host '{}' not found in config", current),
+                    Some(child) => {
+                        anyhow::anyhow!("Host '{}' inherits unknown host '{}'", child, current)
+                    }
+                })?;
+
+            if visited.iter().any(|v| v == current) {
+                visited.push(current.to_string());
+                return Err(anyhow::anyhow!(
+                    "Cyclic host inheritance detected: {}",
+                    visited.join(" → ")
+                ));
+            }
+            visited.push(current.to_string());
+            chain.push(host);
+
+            match &host.inherits {
+                Some(parent) => current = parent,
+                None => break,
+            }
+        }
+
+        chain.reverse();
+        Ok(chain)
+    }
+
+    /// Roles for a host, including roles inherited from parent hosts.
+    pub fn resolved_host_roles(&self, host_name: &str) -> anyhow::Result<Vec<String>> {
+        let mut roles = Vec::new();
+        for host in self.host_chain(host_name)? {
+            for role in &host.roles {
+                if !roles.contains(role) {
+                    roles.push(role.clone());
+                }
+            }
+        }
+        Ok(roles)
+    }
+
+    /// Add packages to `merged`, deduplicating on name + type. Later layers
+    /// (host over base, child host over parent) replace earlier entries so
+    /// their role restrictions win — matching variable precedence.
+    fn merge_packages_into(merged: &mut Vec<Package>, overlay: Vec<Package>) {
+        for pkg in overlay {
+            if let Some(existing) = merged
+                .iter_mut()
+                .find(|p| p.name == pkg.name && p.pkg_type == pkg.pkg_type)
+            {
+                *existing = pkg;
+            } else {
+                merged.push(pkg);
+            }
+        }
+    }
+
+    /// Merge the base config with a specific host configuration, applying the
+    /// host's `inherits` chain (ancestors first, so children override).
     pub fn with_host(&self, host_name: &str) -> anyhow::Result<Config> {
-        let host = self
-            .hosts
-            .get(host_name)
-            .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", host_name))?;
+        let chain = self.host_chain(host_name)?;
 
         let mut merged_vars = self.variables.clone();
-        for (key, value) in &host.variables {
-            merged_vars.insert(key.clone(), value.clone());
-        }
-
         let mut merged_dotfiles = self.dotfiles.clone();
-        merged_dotfiles.extend(host.dotfiles.clone());
-
         let mut merged_packages = self.packages.normalized();
-        let host_packages = host.packages.normalized();
-        for pkg in host_packages.homebrew {
-            if !merged_packages.homebrew.iter().any(|p| p.name == pkg.name) {
-                merged_packages.homebrew.push(pkg);
-            }
-        }
-        for pkg in host_packages.zerobrew {
-            if !merged_packages.zerobrew.iter().any(|p| p.name == pkg.name) {
-                merged_packages.zerobrew.push(pkg);
-            }
-        }
-
         let mut merged_hooks = self.hooks.clone();
-        merged_hooks.extend(host.hooks.clone());
-
         let mut merged_secrets = self.secrets.clone();
-        for (key, value) in &host.secrets {
-            merged_secrets.insert(key.clone(), value.clone());
-        }
-
         let mut merged_mise = self.mise.clone();
-        for (key, value) in &host.mise.tools {
-            merged_mise.tools.insert(key.clone(), value.clone());
+
+        for host in chain {
+            for (key, value) in &host.variables {
+                merged_vars.insert(key.clone(), value.clone());
+            }
+
+            merged_dotfiles.extend(host.dotfiles.clone());
+
+            let host_packages = host.packages.normalized();
+            Self::merge_packages_into(&mut merged_packages.homebrew, host_packages.homebrew);
+            Self::merge_packages_into(&mut merged_packages.zerobrew, host_packages.zerobrew);
+
+            merged_hooks.extend(host.hooks.clone());
+
+            for (key, value) in &host.secrets {
+                merged_secrets.insert(key.clone(), value.clone());
+            }
+
+            for (key, value) in &host.mise.tools {
+                merged_mise.tools.insert(key.clone(), value.clone());
+            }
         }
 
         Ok(Config {

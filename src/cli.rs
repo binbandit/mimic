@@ -333,14 +333,10 @@ impl Cli {
         }
     }
 
-    /// Get the roles for the resolved host.
+    /// Get the roles for the resolved host, including inherited roles.
     fn get_host_roles(config: &Config, host_name: &Option<String>) -> Vec<String> {
         if let Some(name) = host_name {
-            config
-                .hosts
-                .get(name)
-                .map(|h| h.roles.clone())
-                .unwrap_or_default()
+            config.resolved_host_roles(name).unwrap_or_default()
         } else {
             vec![]
         }
@@ -349,11 +345,11 @@ impl Cli {
     /// Build a HostContext from the resolved host, with safe fallback.
     fn build_host_context(config: &Config, host_name: &Option<String>) -> HostContext {
         if let Some(name) = host_name
-            && let Some(host_config) = config.hosts.get(name)
+            && config.hosts.contains_key(name)
         {
             return HostContext {
                 name: name.clone(),
-                roles: host_config.roles.clone(),
+                roles: config.resolved_host_roles(name).unwrap_or_default(),
             };
         }
         HostContext {
@@ -698,6 +694,17 @@ impl Cli {
                         }
                     }
                 }
+            }
+        }
+
+        // Write the declared [mise] tools to mise's config before hooks run,
+        // so a `mise` hook installs the tool set from this apply, not a stale one.
+        if !config.mise.tools.is_empty() {
+            println!();
+            if let Err(e) = crate::mise::generate_mise_config(&config) {
+                eprintln!("  {} Failed to write mise config: {}", "✗".red(), e);
+                Self::save_state_best_effort(&state, &state_path);
+                return Err(e);
             }
         }
 
@@ -1383,9 +1390,16 @@ impl Cli {
 
                 Self::try_git_clone(repo, &repo_dir, self.branch.as_deref())
                     .map_err(|retry_err| {
+                        // Strip the internal retry marker so it never reaches
+                        // the user-facing message.
+                        let msg = retry_err.to_string();
+                        let msg = msg
+                            .strip_prefix("__auth_retry__: ")
+                            .unwrap_or(&msg)
+                            .to_string();
                         anyhow::anyhow!(
                             "Git clone failed after authentication\n\n{}\n\nTo fix:\n  - Verify you have access to the repository\n  - Try cloning manually: {}",
-                            retry_err,
+                            msg,
                             Self::manual_clone_command(repo, self.branch.as_deref())
                         )
                     })?;
@@ -1551,8 +1565,11 @@ impl Cli {
         use std::env;
         use std::process::Command;
 
-        let expanded_target =
-            crate::expand::expand_tilde(target).unwrap_or_else(|_| target.to_string());
+        // Use the same expansion rules as apply (~ and env vars) so lookups
+        // match the fully-expanded targets stored in state.
+        let expanded_target = crate::expand::expand_path_str(target)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| target.to_string());
 
         let state_path = self.get_state_path();
         let mut source_path: Option<String> = None;
@@ -1581,18 +1598,9 @@ impl Cli {
             let config = Config::from_file(&config_path)?;
 
             for dotfile in &config.dotfiles {
-                let config_target = if dotfile.target.starts_with("~/") {
-                    if let Some(home) = directories::BaseDirs::new() {
-                        home.home_dir()
-                            .join(&dotfile.target[2..])
-                            .to_string_lossy()
-                            .to_string()
-                    } else {
-                        dotfile.target.clone()
-                    }
-                } else {
-                    dotfile.target.clone()
-                };
+                let config_target = crate::expand::expand_path_str(&dotfile.target)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| dotfile.target.clone());
 
                 if config_target == expanded_target || dotfile.target == target {
                     // Source paths are already resolved to absolute by Config::from_file
@@ -1660,24 +1668,36 @@ impl Cli {
     fn run_clean(&self) -> anyhow::Result<()> {
         let (config, _host_name) = self.resolve_config_and_host()?;
 
+        // Config entries may use tap-qualified names (sometap/foo); brew
+        // reports short names, so compare on the final path segment.
+        fn short_name(name: &str) -> &str {
+            name.rsplit('/').next().unwrap_or(name)
+        }
+
         let normalized = config.packages.normalized();
-        let config_formulas: std::collections::HashSet<String> = normalized
+        let config_formulas: std::collections::HashSet<&str> = normalized
             .homebrew
             .iter()
             .filter(|p| p.pkg_type == "formula")
-            .map(|p| p.name.clone())
+            .map(|p| short_name(&p.name))
             .collect();
-        let config_casks: std::collections::HashSet<String> = normalized
+        let config_casks: std::collections::HashSet<&str> = normalized
             .homebrew
             .iter()
             .filter(|p| p.pkg_type == "cask")
-            .map(|p| p.name.clone())
+            .map(|p| short_name(&p.name))
             .collect();
-        let config_zb: std::collections::HashSet<String> =
-            normalized.zerobrew.iter().map(|p| p.name.clone()).collect();
+        let config_zb: std::collections::HashSet<&str> = normalized
+            .zerobrew
+            .iter()
+            .map(|p| short_name(&p.name))
+            .collect();
 
         let homebrew = HomebrewManager::new();
-        let installed_formulas = homebrew.list_installed()?;
+        // Only leaves count as removable: `brew list` includes auto-installed
+        // dependencies, which must not be uninstalled out from under the
+        // configured packages that need them.
+        let installed_formulas = homebrew.list_leaves()?;
         let installed_casks = homebrew.list_installed_casks()?;
 
         let extra_formulas: Vec<&String> = installed_formulas
@@ -1696,7 +1716,7 @@ impl Cli {
             zerobrew
                 .list_installed()?
                 .into_iter()
-                .filter(|p| !config_zb.contains(p.as_str()))
+                .filter(|p| !config_zb.contains(short_name(p)))
                 .collect()
         } else {
             Vec::new()
@@ -1728,21 +1748,9 @@ impl Cli {
             extra_zb.len()
         );
 
-        if !self.yes {
-            use dialoguer::Confirm;
-            let confirmed = Confirm::new()
-                .with_prompt("Uninstall these packages?")
-                .default(false)
-                .interact()?;
-
-            if !confirmed {
-                println!("{}", "Cancelled.".bright_black());
-                return Ok(());
-            }
-        }
-
         let total = extra_formulas.len() + extra_casks.len() + extra_zb.len();
 
+        // Dry run is a preview: never prompt, never touch anything.
         if self.dry_run {
             println!();
             for name in &extra_formulas {
@@ -1768,9 +1776,24 @@ impl Cli {
             return Ok(());
         }
 
+        if !self.yes {
+            use dialoguer::Confirm;
+            let confirmed = Confirm::new()
+                .with_prompt("Uninstall these packages?")
+                .default(false)
+                .interact()?;
+
+            if !confirmed {
+                println!("{}", "Cancelled.".bright_black());
+                return Ok(());
+            }
+        }
+
         println!();
         let mut all_brew: Vec<&str> = extra_formulas.iter().map(|s| s.as_str()).collect();
         all_brew.extend(extra_casks.iter().map(|s| s.as_str()));
+
+        let mut uninstall_errors: Vec<anyhow::Error> = Vec::new();
 
         if !all_brew.is_empty() {
             match homebrew.uninstall_many(&all_brew) {
@@ -1789,6 +1812,7 @@ impl Cli {
                             .red()
                             .bold()
                     );
+                    uninstall_errors.push(e);
                 }
             }
         }
@@ -1811,8 +1835,16 @@ impl Cli {
                             .red()
                             .bold()
                     );
+                    uninstall_errors.push(e);
                 }
             }
+        }
+
+        if !uninstall_errors.is_empty() {
+            return Err(anyhow::anyhow!(
+                "clean finished with {} error(s); see output above",
+                uninstall_errors.len()
+            ));
         }
 
         Ok(())

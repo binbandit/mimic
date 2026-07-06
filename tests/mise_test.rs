@@ -110,3 +110,22 @@ fn test_mise_config_write_and_read() {
     assert!(content.contains("node = \"25\""));
     assert!(content.contains("go = \"latest\""));
 }
+
+#[test]
+fn test_dotted_tool_name_is_quoted() {
+    let mut tools = HashMap::new();
+    tools.insert("foo.bar".to_string(), "1.0".to_string());
+
+    let config = mimic::mise::MiseConfig { tools };
+    let toml_str = config.to_toml();
+
+    // Unquoted, `foo.bar = "1.0"` would parse as a nested [tools.foo] table
+    assert!(toml_str.contains("\"foo.bar\" = \"1.0\""));
+
+    let parsed: toml::Table = toml::from_str(&toml_str).unwrap();
+    assert_eq!(
+        parsed["tools"]["foo.bar"].as_str(),
+        Some("1.0"),
+        "tool must round-trip as a literal key, not a nested table"
+    );
+}

@@ -116,11 +116,19 @@ impl Hook {
     }
 }
 
-/// Execute all hooks in sequence, filtering by roles
+/// Execute all hooks in sequence, filtering by roles.
+///
+/// A `command` hook with `on_failure = "fail"` aborts immediately. Other hook
+/// failures keep the run going but are reported in an aggregate error at the
+/// end, so `mimic apply` can surface them instead of silently exiting 0.
+/// `command` hooks with `on_failure = "continue"` are excluded from the
+/// aggregate — the user explicitly opted out of failing on them.
 pub fn execute_hooks(hooks: &[Hook], host_roles: &[String], verbose: bool) -> anyhow::Result<()> {
     if hooks.is_empty() {
         return Ok(());
     }
+
+    let mut failed: Vec<String> = Vec::new();
 
     for hook in hooks {
         if !crate::config::should_apply_for_roles(hook.only_roles(), hook.skip_roles(), host_roles)
@@ -131,14 +139,26 @@ pub fn execute_hooks(hooks: &[Hook], host_roles: &[String], verbose: bool) -> an
             continue;
         }
 
-        execute_hook(hook, verbose)?;
+        if !execute_hook(hook, verbose)? {
+            failed.push(hook.name());
+        }
     }
 
-    Ok(())
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "{} hook(s) did not complete successfully: {}",
+            failed.len(),
+            failed.join(", ")
+        ))
+    }
 }
 
-/// Execute a single hook
-fn execute_hook(hook: &Hook, verbose: bool) -> anyhow::Result<()> {
+/// Execute a single hook. Returns `Ok(true)` on success, `Ok(false)` on a
+/// failure the run should continue past (but still report), and `Err` only
+/// for `command` hooks configured with `on_failure = "fail"`.
+fn execute_hook(hook: &Hook, verbose: bool) -> anyhow::Result<bool> {
     println!();
     println!("{} {}", "→ Hook:".bright_cyan(), hook.name());
 
@@ -166,22 +186,64 @@ fn execute_hook(hook: &Hook, verbose: bool) -> anyhow::Result<()> {
     match result {
         Ok(()) => {
             println!("  {} Hook completed", "✓".green());
-            Ok(())
+            Ok(true)
         }
-        Err(e) => {
-            let should_fail = match hook {
-                Hook::Command { on_failure, .. } => matches!(on_failure, FailureMode::Fail),
-                _ => false,
-            };
-
-            if should_fail {
-                Err(e)
-            } else {
-                eprintln!("  {} Hook failed (continuing): {}", "⚠".yellow(), e);
-                Ok(())
+        Err(e) => match hook {
+            Hook::Command {
+                on_failure: FailureMode::Fail,
+                ..
+            } => Err(e),
+            Hook::Command { .. } => {
+                eprintln!(
+                    "  {} Hook failed (continuing as configured): {}",
+                    "⚠".yellow(),
+                    e
+                );
+                Ok(true)
             }
+            _ => {
+                eprintln!("  {} Hook failed (continuing): {}", "⚠".yellow(), e);
+                Ok(false)
+            }
+        },
+    }
+}
+
+/// Run a hook command. In verbose mode output is inherited; otherwise stdout
+/// is discarded and stderr is captured, then echoed (last 20 lines) when the
+/// command fails so the cause isn't thrown away.
+fn run_hook_command(cmd: &mut Command, verbose: bool) -> anyhow::Result<std::process::ExitStatus> {
+    if verbose {
+        return Ok(cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?);
+    }
+
+    let output = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = stderr.trim().lines().collect();
+        let start = lines.len().saturating_sub(20);
+        for line in &lines[start..] {
+            eprintln!("    {}", line.bright_black());
         }
     }
+    Ok(output.status)
+}
+
+/// Locate the rustup binary for hook commands. A rustup we just installed
+/// with `--no-modify-path` is not on the current process PATH, so fall back
+/// to `$CARGO_HOME/bin/rustup` (default `~/.cargo/bin/rustup`).
+fn rustup_bin() -> std::path::PathBuf {
+    if command_exists("rustup") {
+        return std::path::PathBuf::from("rustup");
+    }
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| home::home_dir().map(|h| h.join(".cargo")))
+        .unwrap_or_else(|| std::path::PathBuf::from(".cargo"));
+    cargo_home.join("bin").join("rustup")
 }
 
 fn execute_rustup_hook(
@@ -199,12 +261,12 @@ fn execute_rustup_hook(
             Some(Spinner::new("Installing rustup..."))
         };
 
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path")
-            .stdout(if verbose { Stdio::inherit() } else { Stdio::null() })
-            .stderr(if verbose { Stdio::inherit() } else { Stdio::null() })
-            .status()?;
+        let status = run_hook_command(
+            Command::new("sh")
+                .arg("-c")
+                .arg("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path"),
+            verbose,
+        )?;
 
         if !status.success() {
             if let Some(spinner) = spinner {
@@ -217,6 +279,9 @@ fn execute_rustup_hook(
             spinner.finish_with_message("✓ Installed rustup");
         }
     }
+
+    let rustup = rustup_bin();
+    let mut failures = 0usize;
 
     for toolchain in toolchains {
         if verbose {
@@ -236,19 +301,10 @@ fn execute_rustup_hook(
             )))
         };
 
-        let status = Command::new("rustup")
-            .args(["toolchain", "install", toolchain])
-            .stdout(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .stderr(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .status()?;
+        let status = run_hook_command(
+            Command::new(&rustup).args(["toolchain", "install", toolchain]),
+            verbose,
+        )?;
 
         if !status.success() {
             if let Some(spinner) = spinner {
@@ -272,21 +328,19 @@ fn execute_rustup_hook(
                     toolchain
                 );
             }
-            let status = Command::new("rustup")
-                .args(["component", "add", "--toolchain", toolchain, component])
-                .stdout(if verbose {
-                    Stdio::inherit()
-                } else {
-                    Stdio::null()
-                })
-                .stderr(if verbose {
-                    Stdio::inherit()
-                } else {
-                    Stdio::null()
-                })
-                .status()?;
+            let status = run_hook_command(
+                Command::new(&rustup).args([
+                    "component",
+                    "add",
+                    "--toolchain",
+                    toolchain,
+                    component,
+                ]),
+                verbose,
+            )?;
 
             if !status.success() {
+                failures += 1;
                 eprintln!(
                     "  {} Failed to add {} to {} (continuing)",
                     "⚠".yellow(),
@@ -307,21 +361,13 @@ fn execute_rustup_hook(
                     toolchain
                 );
             }
-            let status = Command::new("rustup")
-                .args(["target", "add", "--toolchain", toolchain, target])
-                .stdout(if verbose {
-                    Stdio::inherit()
-                } else {
-                    Stdio::null()
-                })
-                .stderr(if verbose {
-                    Stdio::inherit()
-                } else {
-                    Stdio::null()
-                })
-                .status()?;
+            let status = run_hook_command(
+                Command::new(&rustup).args(["target", "add", "--toolchain", toolchain, target]),
+                verbose,
+            )?;
 
             if !status.success() {
+                failures += 1;
                 eprintln!(
                     "  {} Failed to add target {} to {} (continuing)",
                     "⚠".yellow(),
@@ -340,19 +386,10 @@ fn execute_rustup_hook(
                 default_toolchain
             );
         }
-        let status = Command::new("rustup")
-            .args(["default", default_toolchain])
-            .stdout(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .stderr(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .status()?;
+        let status = run_hook_command(
+            Command::new(&rustup).args(["default", default_toolchain]),
+            verbose,
+        )?;
 
         if !status.success() {
             return Err(anyhow::anyhow!(
@@ -362,6 +399,13 @@ fn execute_rustup_hook(
         }
     }
 
+    if failures > 0 {
+        return Err(anyhow::anyhow!(
+            "{} rustup component/target step(s) failed",
+            failures
+        ));
+    }
+
     Ok(())
 }
 
@@ -369,6 +413,8 @@ fn execute_cargo_install_hook(packages: &[CargoPackage], verbose: bool) -> anyho
     if !command_exists("cargo") {
         return Err(anyhow::anyhow!("cargo not found - install Rust first"));
     }
+
+    let mut failures = 0usize;
 
     for package in packages {
         if verbose {
@@ -390,24 +436,13 @@ fn execute_cargo_install_hook(packages: &[CargoPackage], verbose: bool) -> anyho
             args.extend(["--bin", bin]);
         }
 
-        let status = Command::new("cargo")
-            .args(&args)
-            .stdout(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .stderr(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .status()?;
+        let status = run_hook_command(Command::new("cargo").args(&args), verbose)?;
 
         if !status.success() {
             if let Some(spinner) = spinner {
                 spinner.finish_with_error(format!("Failed to install {}", package.name));
             }
+            failures += 1;
             eprintln!(
                 "  {} Failed to install {} (continuing)",
                 "⚠".yellow(),
@@ -416,6 +451,14 @@ fn execute_cargo_install_hook(packages: &[CargoPackage], verbose: bool) -> anyho
         } else if let Some(spinner) = spinner {
             spinner.finish_with_message(format!("✓ Installed {}", package.name));
         }
+    }
+
+    if failures > 0 {
+        return Err(anyhow::anyhow!(
+            "{} of {} cargo package(s) failed to install",
+            failures,
+            packages.len()
+        ));
     }
 
     Ok(())
@@ -436,19 +479,7 @@ fn execute_mise_hook(verbose: bool) -> anyhow::Result<()> {
         Some(Spinner::new("Running mise install..."))
     };
 
-    let status = Command::new("mise")
-        .arg("install")
-        .stdout(if verbose {
-            Stdio::inherit()
-        } else {
-            Stdio::null()
-        })
-        .stderr(if verbose {
-            Stdio::inherit()
-        } else {
-            Stdio::null()
-        })
-        .status()?;
+    let status = run_hook_command(Command::new("mise").arg("install"), verbose)?;
 
     if !status.success() {
         if let Some(spinner) = spinner {
@@ -469,6 +500,8 @@ fn execute_pnpm_global_hook(packages: &[String], verbose: bool) -> anyhow::Resul
         return Err(anyhow::anyhow!("pnpm not found - install pnpm first"));
     }
 
+    let mut failures = 0usize;
+
     for package in packages {
         if verbose {
             println!("  {} Installing {}...", "→".bright_black(), package);
@@ -483,24 +516,13 @@ fn execute_pnpm_global_hook(packages: &[String], verbose: bool) -> anyhow::Resul
             )))
         };
 
-        let status = Command::new("pnpm")
-            .args(["add", "-g", package])
-            .stdout(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .stderr(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .status()?;
+        let status = run_hook_command(Command::new("pnpm").args(["add", "-g", package]), verbose)?;
 
         if !status.success() {
             if let Some(spinner) = spinner {
                 spinner.finish_with_error(format!("Failed to install {}", package));
             }
+            failures += 1;
             eprintln!(
                 "  {} Failed to install {} (continuing)",
                 "⚠".yellow(),
@@ -509,6 +531,14 @@ fn execute_pnpm_global_hook(packages: &[String], verbose: bool) -> anyhow::Resul
         } else if let Some(spinner) = spinner {
             spinner.finish_with_message(format!("✓ Installed {}", package));
         }
+    }
+
+    if failures > 0 {
+        return Err(anyhow::anyhow!(
+            "{} of {} pnpm package(s) failed to install",
+            failures,
+            packages.len()
+        ));
     }
 
     Ok(())
@@ -536,19 +566,10 @@ fn execute_uv_python_hook(
         )))
     };
 
-    let status = Command::new("uv")
-        .args(["python", "install", version])
-        .stdout(if verbose {
-            Stdio::inherit()
-        } else {
-            Stdio::null()
-        })
-        .stderr(if verbose {
-            Stdio::inherit()
-        } else {
-            Stdio::null()
-        })
-        .status()?;
+    let status = run_hook_command(
+        Command::new("uv").args(["python", "install", version]),
+        verbose,
+    )?;
 
     if !status.success() {
         if let Some(spinner) = install_spinner {
@@ -613,20 +634,7 @@ fn execute_command_hook(
         Some(Spinner::new("Running command hook..."))
     };
 
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .stdout(if verbose {
-            Stdio::inherit()
-        } else {
-            Stdio::null()
-        })
-        .stderr(if verbose {
-            Stdio::inherit()
-        } else {
-            Stdio::null()
-        })
-        .status()?;
+    let status = run_hook_command(Command::new("sh").arg("-c").arg(command), verbose)?;
 
     if !status.success() {
         if let Some(spinner) = spinner {

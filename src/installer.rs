@@ -76,6 +76,31 @@ impl HomebrewManager {
         Ok(Some(packages))
     }
 
+    /// List leaf formulae — packages installed on request rather than as
+    /// dependencies of something else — via `brew leaves`. Comparing configs
+    /// against `brew list` would flag every auto-installed dependency as
+    /// "extra", so clean uses this instead.
+    pub fn list_leaves(&self) -> Result<Vec<String>, anyhow::Error> {
+        let output = Command::new("brew").arg("leaves").output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                Ok(stdout
+                    .lines()
+                    .map(|line| line.trim().to_string())
+                    .filter(|line| !line.is_empty())
+                    .collect())
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow::anyhow!("brew leaves failed: {}", stderr))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(brew_not_found()),
+            Err(e) => Err(anyhow::anyhow!("Failed to execute brew: {}", e)),
+        }
+    }
+
     /// Check if a package is installed, routing to formula or cask based on type.
     pub fn is_installed_any(&self, name: &str, package_type: &str) -> Result<bool, anyhow::Error> {
         if package_type == "cask" {
