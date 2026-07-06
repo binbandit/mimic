@@ -27,17 +27,29 @@ pub enum ApplyToAllChoice {
     Backup,
 }
 
-/// Recursively copy a directory and its contents
+/// Recursively copy a directory and its contents. Symlinks inside the tree
+/// are recreated as symlinks (not followed — following could escape the tree
+/// or recurse forever on a cyclic link), and directory permissions are
+/// preserved so e.g. a 0700 `.ssh`-style directory doesn't back up as 0755.
 fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(dst)
         .with_context(|| format!("Failed to create directory: {}", dst.display()))?;
+    if let Ok(metadata) = fs::metadata(src) {
+        let _ = fs::set_permissions(dst, metadata.permissions());
+    }
     for entry in
         fs::read_dir(src).with_context(|| format!("Failed to read directory: {}", src.display()))?
     {
         let entry = entry?;
+        let file_type = entry.file_type()?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
+        if file_type.is_symlink() {
+            let link_dest = fs::read_link(&src_path)
+                .with_context(|| format!("Failed to read link: {}", src_path.display()))?;
+            symlink(&link_dest, &dst_path)
+                .with_context(|| format!("Failed to copy symlink: {}", src_path.display()))?;
+        } else if file_type.is_dir() {
             copy_dir_all(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)
@@ -50,7 +62,7 @@ fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// Create a backup of the target file or directory with timestamp suffix
 fn backup_file(target: &Path) -> anyhow::Result<PathBuf> {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-    let backup_name = format!(
+    let base_name = format!(
         "{}.backup.{}",
         target
             .file_name()
@@ -58,7 +70,15 @@ fn backup_file(target: &Path) -> anyhow::Result<PathBuf> {
             .to_string_lossy(),
         timestamp
     );
-    let backup_path = target.with_file_name(backup_name);
+
+    // The timestamp has second granularity; suffix a counter rather than
+    // silently overwriting an earlier backup taken in the same second.
+    let mut backup_path = target.with_file_name(&base_name);
+    let mut counter = 1;
+    while backup_path.exists() || backup_path.is_symlink() {
+        backup_path = target.with_file_name(format!("{}.{}", base_name, counter));
+        counter += 1;
+    }
 
     if target.is_dir() && !target.is_symlink() {
         // For real directories, rename is atomic on the same filesystem
@@ -67,6 +87,13 @@ fn backup_file(target: &Path) -> anyhow::Result<PathBuf> {
     } else if target.is_symlink() && target.is_dir() {
         // Symlink to a directory: recursively copy the contents the symlink points to
         copy_dir_all(target, &backup_path)
+            .with_context(|| format!("Failed to create backup at {}", backup_path.display()))?;
+    } else if target.is_symlink() {
+        // Preserve the symlink itself — copying would dereference it and a
+        // later undo would restore a plain file instead of the user's link.
+        let link_dest = fs::read_link(target)
+            .with_context(|| format!("Failed to read link: {}", target.display()))?;
+        symlink(&link_dest, &backup_path)
             .with_context(|| format!("Failed to create backup at {}", backup_path.display()))?;
     } else {
         fs::copy(target, &backup_path)

@@ -12,7 +12,7 @@ This guide helps you understand how mimic compares to other popular dotfile mana
 | **Templating** | Yes | No | Yes | Yes | Yes |
 | **Multi-machine** | Yes (hosts) | Manual | Yes | Yes | Yes |
 | **State Tracking** | Yes | No | Yes | Yes | No |
-| **Secrets Management** | Detection only | No | Yes | Yes | Yes |
+| **Secrets Management** | Yes (Keychain, macOS) + detection | No | Yes | Yes | Yes |
 | **Language** | Rust | Perl | Go | Nix | Bash |
 | **Cross-platform** | macOS/Linux | Unix-like | All | Nix systems | Unix-like |
 
@@ -103,7 +103,7 @@ EOF
 - No file renaming (`dot_vimrc` → just `vimrc`)
 - Source files stay readable and editable
 - Integrated package management
-- Secrets detection (warns before commits)
+- Keychain-backed secrets (set/get/list/rm/export, `{{ secrets.* }}` in templates) plus secrets detection (warns before commits)
 - Faster (Rust vs Go)
 - Cleaner git diffs (no renamed files)
 
@@ -146,9 +146,9 @@ mkdir -p ~/dotfiles/dotfiles
 cp ~/.local/share/chezmoi/dot_vimrc ~/dotfiles/dotfiles/vimrc
 cp ~/.local/share/chezmoi/dot_zshrc ~/dotfiles/dotfiles/zshrc
 
-# For templates, manually resolve or wait for mimic template support
-cp ~/.local/share/chezmoi/dot_gitconfig.tmpl ~/dotfiles/dotfiles/gitconfig
-# Edit gitconfig to replace {{ .email }} with actual value
+# For templates, convert Go template syntax to mimic's Handlebars syntax
+cp ~/.local/share/chezmoi/dot_gitconfig.tmpl ~/dotfiles/dotfiles/gitconfig.tmpl
+# Edit gitconfig.tmpl to replace {{ .email }} with {{ variables.email }}
 
 # Create mimic.toml
 cat > mimic.toml << 'EOF'
@@ -291,7 +291,7 @@ Choose mimic if you:
 - Want good error messages and feedback
 - Are primarily on macOS with Homebrew
 - Prefer explicit over implicit
-- Don't need advanced templating yet
+- Are happy with Handlebars templating (variables, conditionals, secrets) rather than a larger template ecosystem
 - Want to learn the tool in < 1 hour
 
 ### When to Choose Something Else

@@ -96,7 +96,9 @@ fn run_gh_setup_git() -> anyhow::Result<()> {
 /// Returns true if the git stderr indicates an authentication/permission problem.
 pub fn is_auth_error(stderr: &str) -> bool {
     stderr.contains("Authentication failed")
-        || stderr.contains("Permission denied")
+        // SSH auth failure specifically — a bare "Permission denied" can be a
+        // local filesystem error, which gh auth cannot fix.
+        || stderr.contains("Permission denied (publickey")
         || stderr.contains("could not read Username")
         || stderr.contains("terminal prompts disabled")
         || stderr.contains("Repository not found") // GitHub returns 404 for private repos you can't access
@@ -135,13 +137,19 @@ pub fn ensure_gh_auth() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Neither available
+    // Neither available — suggest an install path that fits the platform.
+    let install_hint = if cfg!(target_os = "macos") {
+        "- Install Homebrew (https://brew.sh) then re-run this command\n  \
+         - Or install the GitHub CLI manually: https://cli.github.com"
+    } else {
+        "- Install the GitHub CLI (https://cli.github.com), e.g. apt install gh / dnf install gh, then run: gh auth login"
+    };
     Err(anyhow::anyhow!(
         "Cannot automatically authenticate.\n\n\
          To fix:\n  \
-         - Install Homebrew (https://brew.sh) then re-run this command\n  \
-         - Or install the GitHub CLI manually: https://cli.github.com\n  \
-         - Or configure git credentials: https://git-scm.com/docs/gitcredentials"
+         {}\n  \
+         - Or configure git credentials: https://git-scm.com/docs/gitcredentials",
+        install_hint
     ))
 }
 

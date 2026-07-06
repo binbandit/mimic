@@ -17,7 +17,7 @@ use termcolor::{BufferWriter, ColorChoice};
 /// Returns the number of secret matches found. Detailed output is
 /// printed directly to stdout by ripsecrets.
 pub fn scan_for_secrets(paths: &[PathBuf]) -> Result<usize> {
-    let writer = BufferWriter::stdout(ColorChoice::Always);
+    let writer = BufferWriter::stdout(ColorChoice::Auto);
     let additional_patterns: Vec<String> = Vec::new();
 
     let count = ripsecrets::find_secrets(paths, &additional_patterns, true, false, writer)

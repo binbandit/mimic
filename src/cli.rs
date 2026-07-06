@@ -402,11 +402,12 @@ impl Cli {
 
     fn run_diff(&self) -> anyhow::Result<()> {
         let (config, host_name) = self.resolve_config_and_host()?;
+        let host_ctx = Self::build_host_context(&config, &host_name);
         let host_roles = Self::get_host_roles(&config, &host_name);
         let filtered_config = Self::filter_config_by_roles(config, &host_roles);
 
         let diff_engine = DiffEngine::new();
-        let changes = diff_engine.diff(&filtered_config)?;
+        let changes = diff_engine.diff_with_host(&filtered_config, &host_ctx)?;
 
         if changes.is_empty() {
             println!("{}", "No changes detected.".bright_black());
@@ -457,7 +458,7 @@ impl Cli {
         let filtered_for_diff = Self::filter_config_by_roles(config.clone(), &host_roles);
 
         let diff_engine = DiffEngine::new();
-        let changes = diff_engine.diff(&filtered_for_diff)?;
+        let changes = diff_engine.diff_with_host(&filtered_for_diff, &host_ctx)?;
 
         if changes.is_empty() {
             println!("{}", "No changes to apply.".bright_black());
@@ -1034,6 +1035,46 @@ impl Cli {
             );
         }
 
+        if self.dry_run {
+            println!("{}", "Dry run: undo would perform the following:".bold());
+            println!();
+            for dotfile in &state.dotfiles {
+                let target = PathBuf::from(&dotfile.target);
+                if Self::is_mimic_symlink(&target, dotfile) {
+                    println!(
+                        "  {} Would remove symlink: {}",
+                        "→".bright_black(),
+                        dotfile.target
+                    );
+                } else if target.exists() || target.is_symlink() {
+                    println!(
+                        "  {} Would skip {} (no longer a mimic-managed symlink)",
+                        "→".bright_black(),
+                        dotfile.target
+                    );
+                    continue;
+                }
+                if let Some(backup) = &dotfile.backup_path {
+                    println!(
+                        "  {} Would restore backup: {} → {}",
+                        "→".bright_black(),
+                        backup,
+                        dotfile.target
+                    );
+                }
+            }
+            if !state.packages.is_empty() {
+                println!(
+                    "  {} {} tracked package(s) would be forgotten (packages are not uninstalled)",
+                    "→".bright_black(),
+                    state.packages.len()
+                );
+            }
+            println!();
+            println!("{}", "Dry run: no changes were made.".yellow());
+            return Ok(());
+        }
+
         println!("{}", "Undoing last apply operation...".bold());
         println!();
 
@@ -1100,9 +1141,10 @@ impl Cli {
             if let Some(backup_path_str) = &dotfile.backup_path {
                 let backup_path = PathBuf::from(backup_path_str);
 
-                if backup_path.exists() {
-                    // Use rename for directory backups, copy for file backups
-                    let restore_result = if backup_path.is_dir() {
+                if backup_path.exists() || backup_path.is_symlink() {
+                    // Rename directory and symlink backups (rename moves the
+                    // link itself; copying would dereference it), copy files.
+                    let restore_result = if backup_path.is_dir() || backup_path.is_symlink() {
                         std::fs::rename(&backup_path, &target)
                     } else {
                         std::fs::copy(&backup_path, &target).map(|_| ())
@@ -1261,6 +1303,27 @@ impl Cli {
         Ok(())
     }
 
+    /// Derive a valid shell identifier from a secret key: uppercase, with
+    /// every non-alphanumeric character mapped to `_`, and a leading `_` if
+    /// the key starts with a digit. `my-token` → `MY_TOKEN`, not the invalid
+    /// `MY-TOKEN` that would make `eval "$(mimic secrets export)"` choke.
+    fn shell_identifier(key: &str) -> String {
+        let mut name: String = key
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        if name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            name.insert(0, '_');
+        }
+        name
+    }
+
     fn run_secrets(&self, cmd: &SecretsCommands) -> anyhow::Result<()> {
         use crate::secrets;
 
@@ -1270,7 +1333,12 @@ impl Cli {
                     use std::io::Read;
                     let mut buf = String::new();
                     std::io::stdin().read_to_string(&mut buf)?;
-                    buf.trim().to_string()
+                    // Strip only the final newline that piping adds — trimming
+                    // more would corrupt whitespace-significant secrets.
+                    buf.strip_suffix('\n')
+                        .map(|s| s.strip_suffix('\r').unwrap_or(s))
+                        .unwrap_or(&buf)
+                        .to_string()
                 } else {
                     use dialoguer::Password;
                     Password::new()
@@ -1284,8 +1352,16 @@ impl Cli {
             }
 
             SecretsCommands::Get { key } => {
+                use std::io::{IsTerminal, Write};
                 let value = secrets::get_secret(key)?;
-                println!("{}", value);
+                // Don't append a newline when output is redirected — the file
+                // or pipe should receive the exact secret bytes.
+                if std::io::stdout().is_terminal() {
+                    println!("{}", value);
+                } else {
+                    print!("{}", value);
+                    std::io::stdout().flush()?;
+                }
                 Ok(())
             }
 
@@ -1303,13 +1379,28 @@ impl Cli {
             }
 
             SecretsCommands::Rm { key } => {
+                if self.dry_run {
+                    println!(
+                        "  {} Would remove secret '{}' from keychain",
+                        "→".bright_black(),
+                        key
+                    );
+                    return Ok(());
+                }
                 secrets::remove_secret(key)?;
                 println!("{} Secret '{}' removed from keychain", "✓".green(), key);
                 Ok(())
             }
 
             SecretsCommands::Export => {
-                let config = Config::from_file(&self.find_config()?)?;
+                // The config only supplies optional env_var overrides — a
+                // machine with secrets in the keychain but no mimic.toml on
+                // the search path should still be able to export them.
+                let config = self
+                    .find_config()
+                    .ok()
+                    .and_then(|path| Config::from_file(&path).ok())
+                    .unwrap_or_default();
                 let all_secrets = secrets::get_all_secrets();
 
                 if all_secrets.is_empty() {
@@ -1320,15 +1411,11 @@ impl Cli {
                 }
 
                 for (key, value) in &all_secrets {
-                    let env_var = if let Some(metadata) = config.secrets.get(key) {
-                        metadata
-                            .env_var
-                            .as_ref()
-                            .cloned()
-                            .unwrap_or_else(|| key.to_uppercase())
-                    } else {
-                        key.to_uppercase()
-                    };
+                    let env_var = config
+                        .secrets
+                        .get(key)
+                        .and_then(|metadata| metadata.env_var.clone())
+                        .unwrap_or_else(|| Self::shell_identifier(key));
 
                     // Single-quote the value so shell metacharacters in the
                     // secret ($, `, ", \) survive `eval "$(mimic secrets export)"`.
@@ -1484,7 +1571,9 @@ impl Cli {
                 command: Commands::Apply,
                 config: Some(config_path),
                 host: self.host.clone(),
-                yes: true,
+                // Respect the user's interactivity choice: only skip apply's
+                // confirmation and conflict prompts if they passed --yes.
+                yes: self.yes,
                 dry_run: self.dry_run,
                 verbose: self.verbose,
                 state: self.state.clone(),
@@ -1875,5 +1964,18 @@ pub fn run() -> Result<(), i32> {
 
             Err(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cli;
+
+    #[test]
+    fn test_shell_identifier_sanitizes_keys() {
+        assert_eq!(Cli::shell_identifier("github_token"), "GITHUB_TOKEN");
+        assert_eq!(Cli::shell_identifier("my-token"), "MY_TOKEN");
+        assert_eq!(Cli::shell_identifier("openai.key"), "OPENAI_KEY");
+        assert_eq!(Cli::shell_identifier("2fa_secret"), "_2FA_SECRET");
     }
 }

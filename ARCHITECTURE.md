@@ -62,7 +62,7 @@ mimic follows a declarative configuration model: users specify their desired sta
 **Responsibilities:**
 - Display ASCII spinners during operations
 - Show operation timing on completion
-- Detect CI environments and disable spinners automatically
+- Detect CI environments and non-TTY output and disable spinners automatically
 - Support concurrent operations via MultiProgress
 - Provide consistent visual feedback across all commands
 
@@ -95,8 +95,8 @@ impl SpinnerManager {
 ```
 
 **Design decisions:**
-- CI detection via `std::env::var("CI")` (standard CI environment variable)
-- Optional `ProgressBar` pattern: `pb: Option<ProgressBar>` allows no-op in CI
+- Spinners hide when the `CI` environment variable is set OR when stderr is not a TTY (indicatif draws to stderr)
+- Optional `ProgressBar` pattern: `pb: Option<ProgressBar>` allows no-op when hidden
 - Timing tracked from construction via `start_time: Instant`
 - Template: `{spinner:.green} {msg}` with 100ms tick interval
 - MultiProgress enables concurrent operations without visual conflicts
@@ -201,24 +201,28 @@ pub struct DotfileState {
 
 **Responsibilities:**
 - Integrate Handlebars template engine
-- Provide system variables (hostname, username, os, arch)
-- Merge user-defined variables from config
+- Provide system values (hostname, username, os, arch) under the `system.*` namespace
+- Expose user-defined variables from config under the `variables.*` namespace
+- Expose host name/roles under `host.*` and keychain secrets under `secrets.*`
 - Strict mode: error on undefined variables
 
 **Key functions:**
 ```rust
-pub fn render_template(template: &str, config: &Config) -> Result<String>
+pub fn render_template(template: &str, variables: &HashMap<String, String>) -> Result<String>
 ```
 
-**System variables:**
-- `{{ hostname }}` - via `whoami::hostname()`
-- `{{ username }}` - via `whoami::username()`
-- `{{ os }}` - via `std::env::consts::OS`
-- `{{ arch }}` - via `std::env::consts::ARCH`
+**Template context namespaces:**
+- `{{ variables.* }}` - user-defined variables from `[variables]`
+- `{{ system.hostname }}` - via `whoami::hostname()`
+- `{{ system.username }}` - via `whoami::username()`
+- `{{ system.os }}` - via `std::env::consts::OS`
+- `{{ system.arch }}` - via `std::env::consts::ARCH`
+- `{{ host.name }}` / `{{ host.roles }}` - selected host context
+- `{{ secrets.* }}` - secrets from macOS Keychain
 
 **Design decisions:**
-- Strict mode prevents silent failures from typos
-- User variables override system variables
+- Strict mode prevents silent failures from typos: a bare `{{ name }}` is a hard render error — values must be namespaced (e.g. `{{ variables.name }}`)
+- Namespacing keeps user variables, system values, host context, and secrets from colliding
 - Supports template file contents with Handlebars (`.tmpl` and `.hbs` files)
 
 ### Linker Engine (`src/linker.rs`)
@@ -273,18 +277,25 @@ pub fn create_symlink_with_resolution(
 ```rust
 impl HomebrewManager {
     pub fn new() -> Self
-    pub fn list_installed() -> Result<Vec<String>>
-    pub fn is_installed(name: &str) -> Result<bool>
-    pub fn install(
-        name: &str,
-        package_type: &str,
+    pub fn list_installed(&self) -> Result<Vec<String>>
+    pub fn list_installed_casks(&self) -> Result<Vec<String>>
+    pub fn list_leaves(&self) -> Result<Vec<String>>
+    pub fn is_installed(&self, name: &str) -> Result<bool>
+    pub fn is_installed_cask(&self, name: &str) -> Result<bool>
+    pub fn is_installed_any(&self, name: &str, package_type: &str) -> Result<bool>
+    pub fn list_installed_any(&self) -> Result<Option<Vec<String>>>
+    pub fn install_cask(&self, name: &str, state: &mut State) -> Result<()>
+    pub fn install_many_formulae(
+        &self,
+        names: &[&str],
         state: &mut State,
-    ) -> Result<()>
+    ) -> Result<Vec<String>, Vec<(String, anyhow::Error)>>
+    pub fn uninstall_many(&self, names: &[&str]) -> Result<Vec<String>>
 }
 ```
 
 **Design decisions:**
-- Install-only, never uninstall (safe by design)
+- `apply` never uninstalls; `uninstall_many` is only used by the explicit `mimic clean` command
 - Idempotent: checks if already installed before running `brew install`
 - If package already installed but not in state, adds to state without reinstalling
 - Uses `std::process::Command` to shell out to `brew`
@@ -463,9 +474,10 @@ This shows how data flows through the system during `mimic apply`:
        ├─> Create symlink
        └─> state.add_dotfile()
 
-6a. For each homebrew package:
-    └─> HomebrewManager::install()
-        ├─> is_installed() check
+6a. For homebrew packages:
+    └─> HomebrewManager::install_many_formulae() (formulae, batched)
+        HomebrewManager::install_cask() (each cask)
+        ├─> installed check first (idempotent)
         ├─> If not installed:
         │   └─> Command::new("brew").arg("install")...
         └─> state.add_package() [manager = "brew"]

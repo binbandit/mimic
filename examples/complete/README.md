@@ -43,11 +43,11 @@ editor = "nvim"
 github_username = "alexdev"
 ```
 
-Used in templates:
-- `{{ name }}` - Full name for Git
-- `{{ email }}` - Email address
-- `{{ editor }}` - Preferred editor
-- `{{ github_username }}` - GitHub URL rewriting
+Used in templates (under the `variables.*` namespace):
+- `{{ variables.name }}` - Full name for Git
+- `{{ variables.email }}` - Email address
+- `{{ variables.editor }}` - Preferred editor
+- `{{ variables.github_username }}` - GitHub URL rewriting
 
 ### 2. Secrets
 
@@ -81,22 +81,22 @@ Three template files demonstrating variable and secret substitution:
 **gitconfig.tmpl** - Personal Git configuration:
 ```toml
 [user]
-    name = {{ name }}
-    email = {{ email }}
+    name = {{ variables.name }}
+    email = {{ variables.email }}
 
 [github]
-    user = {{ github_username }}
+    user = {{ variables.github_username }}
 
-[url "git@github.com:{{ github_username }}/"]
-    insteadOf = https://github.com/{{ github_username }}/
+[url "git@github.com:{{ variables.github_username }}/"]
+    insteadOf = https://github.com/{{ variables.github_username }}/
 ```
 
 **zshrc.tmpl** - Shell with environment variables:
 ```bash
-export EDITOR="{{ editor }}"
-export GIT_AUTHOR_NAME="{{ name }}"
-export GIT_AUTHOR_EMAIL="{{ email }}"
-export GITHUB_USER="{{ github_username }}"
+export EDITOR="{{ variables.editor }}"
+export GIT_AUTHOR_NAME="{{ variables.name }}"
+export GIT_AUTHOR_EMAIL="{{ variables.email }}"
+export GITHUB_USER="{{ variables.github_username }}"
 ```
 
 **npmrc.tmpl** - NPM config with secrets:
@@ -364,7 +364,7 @@ timezone = "America/New_York"
 
 Use in template:
 ```bash
-export TZ="{{ timezone }}"
+export TZ="{{ variables.timezone }}"
 ```
 
 ### Add New Secret

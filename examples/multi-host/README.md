@@ -115,8 +115,8 @@ Templates use host-specific variables:
 **dotfiles/gitconfig.tmpl:**
 ```toml
 [user]
-    name = {{ name }}
-    email = {{ email }}
+    name = {{ variables.name }}
+    email = {{ variables.email }}
 ```
 
 **On personal-macbook renders to:**
@@ -200,7 +200,7 @@ email = "you@company.com"
 email = "you@personal.com"
 ```
 
-The template `{{ email }}` renders differently per host.
+The template `{{ variables.email }}` renders differently per host.
 
 ### Scenario 2: Corporate Proxy
 

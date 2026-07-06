@@ -842,7 +842,7 @@ mimic secrets get github_token
 mimic secrets list
 
 # Export as environment variables
-eval $(mimic secrets export)
+eval "$(mimic secrets export)"
 
 # Remove a secret
 mimic secrets rm old_api_key
@@ -851,8 +851,41 @@ mimic secrets rm old_api_key
 **Behavior:**
 - Stores secrets in macOS Keychain (secure, encrypted)
 - Secrets can be referenced in config as `{{ secrets.KEY }}`
-- Export format: `export KEY="value"`
+- Export format: `export ENV_VAR='value'` — values are single-quoted (internal single quotes escaped as `'\''`) so shell metacharacters survive `eval "$(mimic secrets export)"`
+- `ENV_VAR` is the secret's configured `env_var`, or the uppercased key sanitized to a valid shell identifier (non-alphanumeric characters become `_`)
 - Only works on macOS (requires Keychain access)
+
+### `mimic clean`
+
+Remove installed packages that are not declared in the configuration. This is the explicit opt-in counterpart to `apply`, which never uninstalls anything.
+
+```bash
+mimic clean [OPTIONS]
+```
+
+**Options:**
+- `--dry-run, -n` - Preview what would be removed without prompting or changing anything
+- `--yes, -y` - Skip the confirmation prompt
+
+**Examples:**
+
+```bash
+# Preview extra packages
+mimic clean --dry-run
+
+# Remove extra packages (prompts for confirmation)
+mimic clean
+
+# Remove without prompting
+mimic clean --yes
+```
+
+**Behavior:**
+- Removes Homebrew formulae and casks, and zerobrew packages, that are not in the config
+- Compares formulae against `brew leaves`, so auto-installed dependencies are never touched
+- zerobrew packages are only checked if the config declares any `zb` packages
+- Prompts for confirmation before uninstalling (unless `--yes`)
+- Exits non-zero if any uninstall fails
 
 ## Configuration Reference
 
@@ -887,7 +920,7 @@ only_roles = ["work"]
 
 ### Variables section
 
-Define custom variables that can be used in templates (future feature) and help document your configuration.
+Define custom variables that can be used in templates and help document your configuration.
 
 ```toml
 [variables]
@@ -897,11 +930,17 @@ editor = "nvim"
 shell = "zsh"
 ```
 
+Templates access these under the `variables.*` namespace, e.g. `{{ variables.email }}`. Rendering is strict, so a bare `{{ email }}` is a render error.
+
 **System variables** (automatically available):
-- `{{ hostname }}` - System hostname
-- `{{ username }}` - Current username
-- `{{ os }}` - Operating system (e.g., "macos", "linux")
-- `{{ arch }}` - CPU architecture (e.g., "aarch64", "x86_64")
+- `{{ system.hostname }}` - System hostname
+- `{{ system.username }}` - Current username
+- `{{ system.os }}` - Operating system (e.g., "macos", "linux")
+- `{{ system.arch }}` - CPU architecture (e.g., "aarch64", "x86_64")
+
+**Host values** (from the selected host): `{{ host.name }}` and `{{ host.roles }}`.
+
+**Secrets** (from macOS Keychain): `{{ secrets.key_name }}`.
 
 ### Dotfiles
 
@@ -958,13 +997,63 @@ only_roles = ["work"]
 - It is experimental; use it alongside Homebrew for packages where speed matters
 - If `zb` is not installed, mimic will error clearly and point you to `https://zerobrew.rs`
 
+### Hosts
+
+Define per-machine configuration in `[hosts.*]` sections. Each host merges on top of the base config, and hosts can inherit from other hosts via `inherits`:
+
+```toml
+[hosts.base-mac]
+roles = ["mac"]
+
+[hosts.base-mac.variables]
+editor = "nvim"
+
+[hosts.work-laptop]
+inherits = "base-mac"
+roles = ["work"]
+
+[hosts.work-laptop.variables]
+email = "you@company.com"
+```
+
+**Inheritance behavior:**
+- A host merges its full parent chain, furthest ancestor first, so children override parents
+- Roles, variables, dotfiles, packages, hooks, secrets, and mise tools all merge
+- Inheriting from an unknown host is an error, and inheritance cycles are detected and reported
+
+Use `mimic hosts show <name>` to inspect the merged result.
+
+### Mise
+
+Declare tool versions for [mise](https://mise.jdx.dev) in a `[mise]` section:
+
+```toml
+[mise.tools]
+node = "20"
+python = "3.12"
+go = "1.21"
+```
+
+`[mise.tools]` maps tool name to version. During `mimic apply`, this is written to `~/.config/mise/config.toml` (atomically). Pair it with the `mise` hook to run `mise install` after the config is written:
+
+```toml
+[[hooks]]
+type = "mise"
+```
+
 ## Configuration File Discovery
 
 mimic searches for configuration files in this order:
 
 1. `--config` flag if provided
 2. `./mimic.toml` in current directory
-3. `~/.config/mimic/config.toml`
+3. `~/.config/mimic/repos/<branch>/mimic.toml` (only when `--branch` is set)
+4. `~/mimic.toml`
+5. `~/.config/mimic/mimic.toml`
+6. `~/.config/mimic/config.toml`
+7. `~/.config/mimic/repo/mimic.toml`
+8. `~/.dots/mimic.toml`
+9. `~/.dotfiles/mimic.toml`
 
 ## State File
 
@@ -999,7 +1088,7 @@ mimic shows progress spinners during long-running operations:
 - **Cloning repositories** - `mimic init` shows timing for git clone
 - **Creating symlinks** - Each dotfile operation displays progress
 - **Installing packages** - Homebrew installations show timing
-- **CI/non-TTY detection** - Spinners automatically hidden in CI environments
+- **CI/non-TTY detection** - Spinners automatically hidden in CI environments and non-TTY output
 
 **Example output:**
 ```
@@ -1013,7 +1102,7 @@ mimic shows progress spinners during long-running operations:
 ✓ Installed neovim (took 8.12s)
 ```
 
-Spinners detect CI environments via the `CI` environment variable and automatically disable themselves for clean log output.
+Spinners automatically disable themselves for clean log output when the `CI` environment variable is set, or when stderr is not a TTY (spinners draw to stderr).
 
 ## Error Handling
 
@@ -1061,7 +1150,7 @@ mimic follows these principles:
 
 1. **Declarative** - State what you want, not how to get there
 2. **Safe by default** - Backups, dry-run, confirmations
-3. **Additive only** - Install declared packages, never auto-uninstall
+3. **Additive only** - Install declared packages, never auto-uninstall (`mimic clean` is the explicit opt-in exception)
 4. **Transparent** - State file shows exactly what's managed
 5. **Recoverable** - Undo restores previous state
 

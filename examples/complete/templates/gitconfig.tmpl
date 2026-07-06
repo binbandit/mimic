@@ -1,9 +1,9 @@
 [user]
-    name = {{ name }}
-    email = {{ email }}
+    name = {{ variables.name }}
+    email = {{ variables.email }}
 
 [core]
-    editor = {{ editor }}
+    editor = {{ variables.editor }}
     pager = delta
     autocrlf = input
     excludesfile = ~/.gitignore_global
@@ -41,11 +41,11 @@
 [merge]
     conflictstyle = zdiff3
 
-[url "git@github.com:{{ github_username }}/"]
-    insteadOf = https://github.com/{{ github_username }}/
+[url "git@github.com:{{ variables.github_username }}/"]
+    insteadOf = https://github.com/{{ variables.github_username }}/
 
 [github]
-    user = {{ github_username }}
+    user = {{ variables.github_username }}
 
 [delta]
     navigate = true

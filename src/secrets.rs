@@ -85,9 +85,13 @@ pub fn get_secret(key: &str) -> Result<String> {
         ));
     }
 
-    let secret = String::from_utf8(output.stdout)
-        .context("Secret value is not valid UTF-8")?
-        .trim()
+    let raw = String::from_utf8(output.stdout).context("Secret value is not valid UTF-8")?;
+    // `security -w` appends one newline to the stored value; strip exactly
+    // that. A blanket trim would corrupt whitespace-significant secrets.
+    let secret = raw
+        .strip_suffix('\n')
+        .map(|s| s.strip_suffix('\r').unwrap_or(s))
+        .unwrap_or(&raw)
         .to_string();
 
     Ok(secret)

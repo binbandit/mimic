@@ -8,6 +8,8 @@ handlebars_helper!(includes: |array: Vec<Value>, value: Value| {
     array.iter().any(|v| v == &value)
 });
 
+handlebars_helper!(eq: |a: Value, b: Value| a == b);
+
 #[derive(Debug, Clone)]
 pub struct HostContext {
     pub name: String,
@@ -35,6 +37,7 @@ pub fn render_template_with_host(
     handlebars.register_escape_fn(handlebars::no_escape);
 
     handlebars.register_helper("includes", Box::new(includes));
+    handlebars.register_helper("eq", Box::new(eq));
 
     let secrets = crate::secrets::get_all_secrets();
 

@@ -2,6 +2,7 @@ use crate::config::{Config, Dotfile};
 use crate::expand::expand_path_str;
 use crate::installer::HomebrewManager;
 use crate::linker::rendered_path_for;
+use crate::template::{HostContext, render_file};
 use crate::zerobrew::ZerobrewManager;
 use colored::Colorize;
 use std::fs;
@@ -90,10 +91,22 @@ impl DiffEngine {
     }
 
     pub fn diff(&self, config: &Config) -> anyhow::Result<Vec<Change>> {
+        let host_context = HostContext {
+            name: "default".to_string(),
+            roles: vec![],
+        };
+        self.diff_with_host(config, &host_context)
+    }
+
+    pub fn diff_with_host(
+        &self,
+        config: &Config,
+        host_context: &HostContext,
+    ) -> anyhow::Result<Vec<Change>> {
         let mut changes = Vec::new();
 
         for dotfile in &config.dotfiles {
-            let change = self.diff_dotfile(dotfile)?;
+            let change = self.diff_dotfile(dotfile, config, host_context)?;
             changes.push(change);
         }
 
@@ -111,7 +124,12 @@ impl DiffEngine {
         Ok(changes)
     }
 
-    fn diff_dotfile(&self, dotfile: &Dotfile) -> anyhow::Result<Change> {
+    fn diff_dotfile(
+        &self,
+        dotfile: &Dotfile,
+        config: &Config,
+        host_context: &HostContext,
+    ) -> anyhow::Result<Change> {
         let expanded_source = expand_path(&dotfile.source)?;
         let expanded_target = expand_path(&dotfile.target)?;
 
@@ -173,6 +191,31 @@ impl DiffEngine {
         };
 
         if canonical_expected == canonical_current {
+            // The symlink is right, but for templates that isn't the whole
+            // story: apply re-renders the file, so the rendered content must
+            // also match or apply will change it despite diff saying "✓".
+            if dotfile.is_template() {
+                match render_file(&expanded_source, &config.variables, host_context) {
+                    Ok(rendered) => {
+                        let current_content =
+                            fs::read_to_string(&canonical_expected).unwrap_or_default();
+                        if rendered != current_content {
+                            return Ok(Change::Modify {
+                                resource_type: ResourceType::Dotfile,
+                                description: format!("{}", expanded_target.display()),
+                                reason: "rendered content is stale".to_string(),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        return Ok(Change::Modify {
+                            resource_type: ResourceType::Dotfile,
+                            description: format!("{}", expanded_target.display()),
+                            reason: format!("template error: {}", e),
+                        });
+                    }
+                }
+            }
             Ok(Change::AlreadyCorrect {
                 description: format!("{}", expanded_target.display()),
             })
@@ -279,6 +322,69 @@ mod tests {
     }
 
     #[test]
+    fn test_template_diff_detects_stale_rendered_content() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("mimic_stale_test_{}", unique));
+        fs::create_dir_all(&base).unwrap();
+
+        let source = base.join("stale.conf.tmpl");
+        fs::write(&source, "static-content\n").unwrap();
+
+        let rendered_path = rendered_path_for(&source).unwrap();
+        fs::create_dir_all(rendered_path.parent().unwrap()).unwrap();
+        fs::write(&rendered_path, "outdated-content\n").unwrap();
+
+        let target = base.join("target.conf");
+        symlink(&rendered_path, &target).unwrap();
+
+        let dotfile = Dotfile {
+            source: source.to_string_lossy().to_string(),
+            target: target.to_string_lossy().to_string(),
+            template: true,
+            only_roles: None,
+            skip_roles: None,
+        };
+
+        let engine = DiffEngine::new();
+        let config = Config::default();
+        let host_context = HostContext {
+            name: "default".to_string(),
+            roles: vec![],
+        };
+
+        // Symlink is correct but the rendered content is out of date: apply
+        // would rewrite the file, so diff must not claim "already correct".
+        let change = engine
+            .diff_dotfile(&dotfile, &config, &host_context)
+            .unwrap();
+        match change {
+            Change::Modify { reason, .. } => {
+                assert!(reason.contains("stale"), "got reason: {}", reason);
+            }
+            other => panic!("expected Modify, got {:?}", other),
+        }
+
+        // Once the rendered file matches the render output, it's in sync.
+        fs::write(&rendered_path, "static-content\n").unwrap();
+        let change = engine
+            .diff_dotfile(&dotfile, &config, &host_context)
+            .unwrap();
+        assert!(
+            matches!(change, Change::AlreadyCorrect { .. }),
+            "expected AlreadyCorrect, got {:?}",
+            change
+        );
+
+        let _ = fs::remove_file(&rendered_path);
+        let _ = fs::remove_file(&target);
+        let _ = fs::remove_file(&source);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn test_template_diff_missing_rendered_file_returns_modify_not_error() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -304,7 +410,14 @@ mod tests {
         };
 
         let engine = DiffEngine::new();
-        let change = engine.diff_dotfile(&dotfile).unwrap();
+        let config = Config::default();
+        let host_context = HostContext {
+            name: "default".to_string(),
+            roles: vec![],
+        };
+        let change = engine
+            .diff_dotfile(&dotfile, &config, &host_context)
+            .unwrap();
 
         match change {
             Change::Modify { reason, .. } => {

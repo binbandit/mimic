@@ -5,7 +5,7 @@ Demonstrates template rendering with Handlebars syntax and variable substitution
 ## What This Example Shows
 
 - **Template files** - Using `.tmpl` extension for Handlebars templating
-- **Variable substitution** - Replacing `{{ variable }}` placeholders with actual values
+- **Variable substitution** - Replacing `{{ variables.name }}` placeholders with actual values
 - **Automatic template detection** - Files ending in `.tmpl` or `.hbs` are automatically templated
 - **Explicit template flag** - Using `template = true` in dotfile declarations
 - **Rendered examples** - See actual output in the `rendered/` directory
@@ -17,8 +17,8 @@ templates/
 ├── mimic.toml              # Configuration with variables and template dotfiles
 ├── README.md               # This file
 ├── dotfiles/
-│   ├── gitconfig.tmpl      # Template using {{ name }}, {{ email }}, {{ github_username }}
-│   ├── zshrc.tmpl          # Template using {{ editor }}, {{ email }}, {{ name }}
+│   ├── gitconfig.tmpl      # Template using {{ variables.name }}, {{ variables.email }}, {{ variables.github_username }}
+│   ├── zshrc.tmpl          # Template using {{ variables.editor }}, {{ variables.email }}, {{ variables.name }}
 │   └── ssh-config.tmpl     # Static config (no variables, but shows .tmpl extension)
 └── rendered/               # Example output after template rendering
     ├── gitconfig
@@ -27,15 +27,17 @@ templates/
 
 ## Template Syntax
 
-mimic uses Handlebars templating. Basic variable substitution:
+mimic uses Handlebars templating. Values are namespaced: user-defined variables live under `variables.*`, system values under `system.*`. Basic variable substitution:
 
 ```handlebars
-{{ variable_name }}
+{{ variables.variable_name }}
 ```
+
+Rendering is strict: an unqualified name like `{{ name }}` (or a typo) is a hard render error, so always use the namespace.
 
 ### Available Variables
 
-**User-defined variables** (from `[variables]` section):
+**User-defined variables** (from `[variables]` section, accessed as `{{ variables.* }}`):
 ```toml
 [variables]
 name = "Jane Developer"
@@ -45,10 +47,16 @@ github_username = "janedeveloper"
 ```
 
 **System variables** (automatically available):
-- `{{ hostname }}` - System hostname
-- `{{ username }}` - Current username
-- `{{ os }}` - Operating system (macos, linux)
-- `{{ arch }}` - CPU architecture (aarch64, x86_64)
+- `{{ system.hostname }}` - System hostname
+- `{{ system.username }}` - Current username
+- `{{ system.os }}` - Operating system (macos, linux)
+- `{{ system.arch }}` - CPU architecture (aarch64, x86_64)
+
+**Host values** (from the selected `[hosts.*]` section):
+- `{{ host.name }}` - Selected host name
+- `{{ host.roles }}` - Roles list for the selected host
+
+**Secrets** (from macOS Keychain): `{{ secrets.key_name }}`
 
 ## Template Examples
 
@@ -58,14 +66,14 @@ Personalizes Git configuration with your name, email, and GitHub username:
 
 ```toml
 [user]
-    name = {{ name }}
-    email = {{ email }}
+    name = {{ variables.name }}
+    email = {{ variables.email }}
 
 [github]
-    user = {{ github_username }}
+    user = {{ variables.github_username }}
 
-[url "git@github.com:{{ github_username }}/"]
-    insteadOf = https://github.com/{{ github_username }}/
+[url "git@github.com:{{ variables.github_username }}/"]
+    insteadOf = https://github.com/{{ variables.github_username }}/
 ```
 
 **Renders to:**
@@ -86,12 +94,12 @@ Personalizes Git configuration with your name, email, and GitHub username:
 Sets editor preference and Git environment variables:
 
 ```bash
-export EDITOR="{{ editor }}"
-export GIT_AUTHOR_EMAIL="{{ email }}"
-export GIT_AUTHOR_NAME="{{ name }}"
-export GITHUB_USER="{{ github_username }}"
+export EDITOR="{{ variables.editor }}"
+export GIT_AUTHOR_EMAIL="{{ variables.email }}"
+export GIT_AUTHOR_NAME="{{ variables.name }}"
+export GITHUB_USER="{{ variables.github_username }}"
 
-alias vim='{{ editor }}'
+alias vim='{{ variables.editor }}'
 ```
 
 **Renders to:**
@@ -166,7 +174,7 @@ cat ~/.gitconfig
 cat ~/.zshrc
 ```
 
-You should see your actual values, not `{{ variable }}` placeholders.
+You should see your actual values, not `{{ variables.name }}` placeholders.
 
 ## Customization
 
@@ -190,7 +198,7 @@ To adapt this for your use:
 
 3. **Use in templates**:
    ```
-   export TZ="{{ timezone }}"
+   export TZ="{{ variables.timezone }}"
    ```
 
 4. **Create new templates** - Any file can be templated:
@@ -204,15 +212,23 @@ To adapt this for your use:
 
 ### Conditional sections
 
-Use different configs for different machines:
+Use different configs for different machines with the `eq` helper:
 
 ```bash
-{{#if (eq os "macos")}}
+{{#if (eq system.os "macos")}}
 export PATH="/opt/homebrew/bin:$PATH"
 {{/if}}
 
-{{#if (eq os "linux")}}
+{{#if (eq system.os "linux")}}
 export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+{{/if}}
+```
+
+The `includes` helper checks whether a list contains a value — handy for role-based sections:
+
+```bash
+{{#if (includes host.roles "work")}}
+export HTTP_PROXY="http://proxy.company.com:8080"
 {{/if}}
 ```
 
@@ -228,14 +244,14 @@ work_email = "me@company.com"
 
 ```
 [user]
-    email = {{ work_email }}
+    email = {{ variables.work_email }}
 
 [includeIf "gitdir:~/personal/"]
     path = ~/.gitconfig-personal
 
 # In ~/.gitconfig-personal:
 [user]
-    email = {{ personal_email }}
+    email = {{ variables.personal_email }}
 ```
 
 ## Next Steps

@@ -153,3 +153,33 @@ fn test_symlink_to_existing_symlink_is_idempotent() {
     assert_eq!(state.dotfiles[0].source, source.to_string_lossy());
     assert_eq!(state.dotfiles[0].target, target.to_string_lossy());
 }
+
+#[test]
+fn test_backup_preserves_existing_symlink() {
+    use mimic::linker::{ApplyToAllChoice, create_symlink_with_resolution};
+
+    let temp = TempDir::new().unwrap();
+    let old_dest = temp.path().join("old_dest.txt");
+    let source = temp.path().join("source.txt");
+    let target = temp.path().join("target.txt");
+
+    fs::write(&old_dest, "old content").unwrap();
+    fs::write(&source, "new content").unwrap();
+    // The user already manages target as a symlink to somewhere else
+    symlink(&old_dest, &target).unwrap();
+
+    let mut state = State::new();
+    let mut apply_to_all = Some(ApplyToAllChoice::Backup);
+    create_symlink_with_resolution(&source, &target, &mut state, &mut apply_to_all).unwrap();
+
+    // Target now points at the managed source
+    assert_eq!(fs::read_link(&target).unwrap(), source);
+
+    // The backup must be the original symlink itself, not a dereferenced copy
+    let backup_path = PathBuf::from(state.dotfiles[0].backup_path.as_ref().unwrap());
+    assert!(
+        backup_path.is_symlink(),
+        "backup should preserve the symlink, got a regular file"
+    );
+    assert_eq!(fs::read_link(&backup_path).unwrap(), old_dest);
+}
