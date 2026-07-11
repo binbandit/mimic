@@ -42,6 +42,13 @@ pub struct Cli {
     #[arg(short, long, global = true, help = "Enable verbose output")]
     pub verbose: bool,
 
+    #[arg(
+        long,
+        global = true,
+        help = "Never touch the network: use cached extends repos as-is"
+    )]
+    pub offline: bool,
+
     #[arg(long, global = true, help = "Path to state file")]
     pub state: Option<PathBuf>,
 
@@ -53,16 +60,53 @@ pub struct Cli {
     pub branch: Option<String>,
 }
 
+/// Outcome of matching the requested/detected hostname against `[hosts.*]`.
+enum HostResolution {
+    /// Config has no host entries at all — single-machine setup.
+    NoHosts(Config),
+    /// A host entry matched; `merged` is the effective config for it.
+    Matched { key: String, merged: Config },
+    /// Hostname was auto-detected but matches nothing — defaults apply.
+    Unmatched { requested: String, base: Config },
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplySection {
+    Dotfiles,
+    Packages,
+    Hooks,
+    Mise,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     #[command(about = "Apply configuration changes")]
-    Apply,
+    Apply {
+        #[arg(
+            long,
+            value_enum,
+            value_delimiter = ',',
+            help = "Apply only these sections (dotfiles, packages, hooks, mise)"
+        )]
+        only: Vec<ApplySection>,
+
+        #[arg(
+            long,
+            value_enum,
+            value_delimiter = ',',
+            help = "Skip these sections (dotfiles, packages, hooks, mise)"
+        )]
+        skip: Vec<ApplySection>,
+    },
 
     #[command(about = "Show preview of changes without applying")]
     Diff,
 
     #[command(about = "Check for drift from last applied configuration")]
     Status,
+
+    #[command(about = "Run read-only health checks on config, links, and packages")]
+    Doctor,
 
     #[command(about = "Undo last apply operation")]
     Undo,
@@ -130,22 +174,29 @@ pub enum SecretsCommands {
 
 #[derive(Subcommand)]
 pub enum HostCommands {
-    #[command(about = "List all configured hosts")]
+    #[command(about = "List all configured hosts with their effective roles")]
     List,
 
-    #[command(about = "Show merged configuration for a specific host")]
+    #[command(about = "Show merged (effective) configuration for a specific host")]
     Show {
         #[arg(help = "Name of the host to show")]
         name: String,
+
+        #[arg(long, help = "Show the host's own section without merging defaults")]
+        raw: bool,
+
+        #[arg(long, help = "Show only what the host overrides or adds vs defaults")]
+        diff: bool,
     },
 }
 
 impl Cli {
     pub fn run(&self) -> anyhow::Result<()> {
         match &self.command {
-            Commands::Apply => self.run_apply(),
+            Commands::Apply { only, skip } => self.run_apply(only, skip),
             Commands::Diff => self.run_diff(),
             Commands::Status => self.run_status(),
+            Commands::Doctor => self.run_doctor(),
             Commands::Undo => self.run_undo(),
             Commands::Hosts(hosts_cmd) => self.run_hosts(hosts_cmd),
             Commands::Render { template } => self.run_render(template),
@@ -237,40 +288,89 @@ impl Cli {
         whoami::hostname().unwrap_or_else(|_| "unknown".to_string())
     }
 
+    fn load_options(&self) -> crate::config::LoadOptions {
+        crate::config::LoadOptions {
+            offline: self.offline,
+        }
+    }
+
+    /// Load a config file honoring global flags (--offline).
+    fn load_config(&self, path: &Path) -> anyhow::Result<Config> {
+        if self.verbose {
+            println!("{} {}", "Loading config:".bright_black(), path.display());
+        }
+        Config::from_file_with_options(path, self.load_options())
+    }
+
+    fn host_not_found_error(name: &str, config: &Config) -> anyhow::Error {
+        anyhow::anyhow!(
+            "Host '{}' not found in config\n\nAvailable hosts: {}",
+            name,
+            config.host_names().join(", ")
+        )
+    }
+
+    fn unmatched_host_message(requested: &str) -> String {
+        format!(
+            "no [hosts] entry matches '{}' — applying defaults only. Add [hosts.{}] or list it under an existing host's aliases",
+            requested, requested
+        )
+    }
+
+    /// Resolve the requested/detected hostname against the config's host
+    /// entries. Owns the resolution policy so every command (apply, diff,
+    /// render, doctor) reports the same outcome; callers decide how to
+    /// present it.
+    fn resolve_host(&self, base_config: Config) -> anyhow::Result<HostResolution> {
+        if base_config.hosts.is_empty() {
+            return Ok(HostResolution::NoHosts(base_config));
+        }
+
+        let requested = self.host.clone().unwrap_or_else(Self::detect_hostname);
+
+        match base_config.resolve_host_name(&requested)? {
+            Some(key) => {
+                let merged = base_config.with_host(&key)?;
+                Ok(HostResolution::Matched { key, merged })
+            }
+            // An explicitly requested host that doesn't exist is an error;
+            // an unmatched *detected* hostname just means "defaults only".
+            None if self.host.is_some() => {
+                Err(Self::host_not_found_error(&requested, &base_config))
+            }
+            None => Ok(HostResolution::Unmatched {
+                requested,
+                base: base_config,
+            }),
+        }
+    }
+
     fn resolve_config_and_host(&self) -> anyhow::Result<(Config, Option<String>)> {
         let config_path = self.find_config()?;
+        let base_config = self.load_config(&config_path)?;
 
-        if self.verbose {
-            println!(
-                "{} {}",
-                "Loading config:".bright_black(),
-                config_path.display()
-            );
+        match self.resolve_host(base_config)? {
+            HostResolution::NoHosts(config) => Ok((config, None)),
+            HostResolution::Matched { key, merged } => {
+                if self.verbose {
+                    println!("{} {}", "Using host:".bright_black(), key);
+                }
+                Ok((merged, Some(key)))
+            }
+            HostResolution::Unmatched { requested, base } => {
+                eprintln!(
+                    "{} {}",
+                    "Warning:".yellow().bold(),
+                    Self::unmatched_host_message(&requested)
+                );
+                Ok((base, Some(requested)))
+            }
         }
-
-        let base_config = Config::from_file(&config_path)?;
-
-        if base_config.hosts.is_empty() {
-            return Ok((base_config, None));
-        }
-
-        let host_name = if let Some(host) = &self.host {
-            host.clone()
-        } else {
-            Self::detect_hostname()
-        };
-
-        if self.verbose {
-            println!("{} {}", "Using host:".bright_black(), host_name);
-        }
-
-        let merged_config = base_config.with_host(&host_name)?;
-        Ok((merged_config, Some(host_name)))
     }
 
     fn run_hosts(&self, cmd: &HostCommands) -> anyhow::Result<()> {
         let config_path = self.find_config()?;
-        let config = Config::from_file(&config_path)?;
+        let config = self.load_config(&config_path)?;
 
         match cmd {
             HostCommands::List => {
@@ -283,54 +383,280 @@ impl Cli {
                 println!("{}", "Configured hosts:".bold());
                 for name in config.host_names() {
                     if let Some(host_config) = config.hosts.get(&name) {
-                        let roles = if host_config.roles.is_empty() {
+                        // Effective roles, including roles inherited from parents
+                        let resolved_roles = config
+                            .resolved_host_roles(&name)
+                            .unwrap_or_else(|_| host_config.roles.clone());
+                        let roles = if resolved_roles.is_empty() {
                             "no roles".bright_black().to_string()
                         } else {
-                            host_config.roles.join(", ")
+                            resolved_roles.join(", ")
                         };
-                        println!("  {} ({})", name.green(), roles);
+
+                        let mut annotations = Vec::new();
+                        if let Some(parent) = &host_config.inherits {
+                            annotations.push(format!("inherits {}", parent));
+                        }
+                        if !host_config.aliases.is_empty() {
+                            annotations
+                                .push(format!("aliases: {}", host_config.aliases.join(", ")));
+                        }
+                        let suffix = if annotations.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{}]", annotations.join("; "))
+                                .bright_black()
+                                .to_string()
+                        };
+
+                        println!("  {} ({}){}", name.green(), roles, suffix);
                     }
                 }
                 Ok(())
             }
-            HostCommands::Show { name } => {
-                let merged = config.with_host(name)?;
+            HostCommands::Show { name, raw, diff } => {
+                let resolved_name = config
+                    .resolve_host_name(name)?
+                    .ok_or_else(|| Self::host_not_found_error(name, &config))?;
 
-                println!("{} {}", "Host:".bold(), name.green());
-                println!();
-
-                println!("{}", "Variables:".bold());
-                if merged.variables.is_empty() {
-                    println!("  {}", "(none)".bright_black());
-                } else {
-                    for (key, value) in &merged.variables {
-                        println!("  {} = {}", key, value);
-                    }
+                if *raw {
+                    return Self::show_host_raw(&config, &resolved_name);
                 }
-                println!();
-
-                println!("{}", "Dotfiles:".bold());
-                if merged.dotfiles.is_empty() {
-                    println!("  {}", "(none)".bright_black());
-                } else {
-                    for dotfile in &merged.dotfiles {
-                        println!("  {} → {}", dotfile.source, dotfile.target);
-                    }
+                if *diff {
+                    return Self::show_host_diff(&config, &resolved_name);
                 }
-                println!();
-
-                println!("{}", "Packages:".bold());
-                if merged.packages.homebrew.is_empty() {
-                    println!("  {}", "(none)".bright_black());
-                } else {
-                    for package in &merged.packages.homebrew {
-                        println!("  {} ({})", package.name, package.pkg_type);
-                    }
-                }
-
-                Ok(())
+                Self::show_host_merged(&config, &resolved_name)
             }
         }
+    }
+
+    fn sorted_vars(vars: &std::collections::HashMap<String, String>) -> Vec<(&String, &String)> {
+        let mut entries: Vec<_> = vars.iter().collect();
+        entries.sort_by_key(|(k, _)| k.as_str());
+        entries
+    }
+
+    fn print_host_header(config: &Config, name: &str) {
+        println!("{} {}", "Host:".bold(), name.green());
+        let roles = config.resolved_host_roles(name).unwrap_or_default();
+        if !roles.is_empty() {
+            println!("{} {}", "Roles:".bold(), roles.join(", "));
+        }
+        if let Some(host) = config.hosts.get(name) {
+            if let Some(parent) = &host.inherits {
+                println!("{} {}", "Inherits:".bold(), parent);
+            }
+            if !host.aliases.is_empty() {
+                println!("{} {}", "Aliases:".bold(), host.aliases.join(", "));
+            }
+        }
+        println!();
+    }
+
+    /// Print the Variables / Dotfiles / Packages blocks shared by the merged
+    /// and raw views of `hosts show`.
+    fn print_host_sections(
+        variables: &std::collections::HashMap<String, String>,
+        dotfiles: &[config::Dotfile],
+        packages: &config::Packages,
+    ) {
+        println!("{}", "Variables:".bold());
+        if variables.is_empty() {
+            println!("  {}", "(none)".bright_black());
+        } else {
+            for (key, value) in Self::sorted_vars(variables) {
+                println!("  {} = {}", key, value);
+            }
+        }
+        println!();
+
+        println!("{}", "Dotfiles:".bold());
+        if dotfiles.is_empty() {
+            println!("  {}", "(none)".bright_black());
+        } else {
+            for dotfile in dotfiles {
+                println!("  {} → {}", dotfile.source, dotfile.target);
+            }
+        }
+        println!();
+
+        println!("{}", "Packages:".bold());
+        let packages = packages.normalized();
+        if packages.homebrew.is_empty() && packages.zerobrew.is_empty() {
+            println!("  {}", "(none)".bright_black());
+        } else {
+            for package in &packages.homebrew {
+                println!("  {} ({})", package.name, package.pkg_type);
+            }
+            for package in &packages.zerobrew {
+                println!("  {} (zb)", package.name);
+            }
+        }
+    }
+
+    fn show_host_merged(config: &Config, name: &str) -> anyhow::Result<()> {
+        let merged = config.with_host(name)?;
+
+        Self::print_host_header(config, name);
+        Self::print_host_sections(&merged.variables, &merged.dotfiles, &merged.packages);
+
+        if !merged.hooks.is_empty() {
+            println!();
+            println!("{}", "Hooks:".bold());
+            for hook in &merged.hooks {
+                println!("  {}", hook.name());
+            }
+        }
+
+        if !merged.mise.tools.is_empty() {
+            println!();
+            println!("{}", "Mise tools:".bold());
+            for (tool, version) in Self::sorted_vars(&merged.mise.tools) {
+                println!("  {} = {}", tool, version);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Show only the host's own section, without merging global defaults or
+    /// the inheritance chain.
+    fn show_host_raw(config: &Config, name: &str) -> anyhow::Result<()> {
+        let host = config
+            .hosts
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", name))?;
+
+        println!(
+            "{} {} {}",
+            "Host:".bold(),
+            name.green(),
+            "(raw)".bright_black()
+        );
+        if let Some(parent) = &host.inherits {
+            println!("{} {}", "Inherits:".bold(), parent);
+        }
+        if !host.aliases.is_empty() {
+            println!("{} {}", "Aliases:".bold(), host.aliases.join(", "));
+        }
+        if !host.roles.is_empty() {
+            println!("{} {}", "Roles:".bold(), host.roles.join(", "));
+        }
+        println!();
+
+        Self::print_host_sections(&host.variables, &host.dotfiles, &host.packages);
+
+        Ok(())
+    }
+
+    /// Lines for map entries the host chain added (`+`) or overrode (`~`)
+    /// relative to the base map. Used for both variables and mise tools.
+    fn map_override_lines(
+        merged: &std::collections::HashMap<String, String>,
+        base: &std::collections::HashMap<String, String>,
+    ) -> Vec<String> {
+        Self::sorted_vars(merged)
+            .into_iter()
+            .filter_map(|(key, value)| match base.get(key) {
+                None => Some(format!("  {} {} = {}", "+".green(), key, value)),
+                Some(default) if default != value => Some(format!(
+                    "  {} {} = {} {}",
+                    "~".yellow(),
+                    key,
+                    value,
+                    format!("(default: {})", default).bright_black()
+                )),
+                Some(_) => None,
+            })
+            .collect()
+    }
+
+    /// Show only what the host's inheritance chain overrides or adds compared
+    /// to the global defaults.
+    fn show_host_diff(config: &Config, name: &str) -> anyhow::Result<()> {
+        let merged = config.with_host(name)?;
+
+        println!(
+            "{} {} {}",
+            "Host:".bold(),
+            name.green(),
+            "(overrides vs defaults)".bright_black()
+        );
+        println!();
+
+        // Host-chain dotfiles and hooks are appended after the defaults, so
+        // everything past the base length was added by this host's chain.
+        // Packages merge by name+type instead, so those are set-diffed.
+        let dotfile_lines: Vec<String> = merged.dotfiles[config.dotfiles.len()..]
+            .iter()
+            .map(|d| format!("  {} {} → {}", "+".green(), d.source, d.target))
+            .collect();
+
+        let base_packages = config.packages.normalized();
+        let merged_packages = merged.packages.normalized();
+        let pkg_lines: Vec<String> = [
+            (&merged_packages.homebrew, &base_packages.homebrew, "brew"),
+            (&merged_packages.zerobrew, &base_packages.zerobrew, "zb"),
+        ]
+        .into_iter()
+        .flat_map(|(list, base_list, label)| {
+            list.iter()
+                .filter(|pkg| {
+                    !base_list
+                        .iter()
+                        .any(|b| b.name == pkg.name && b.pkg_type == pkg.pkg_type)
+                })
+                .map(move |pkg| {
+                    format!(
+                        "  {} {} ({} {})",
+                        "+".green(),
+                        pkg.name,
+                        label,
+                        pkg.pkg_type
+                    )
+                })
+        })
+        .collect();
+
+        let hook_lines: Vec<String> = merged.hooks[config.hooks.len()..]
+            .iter()
+            .map(|hook| format!("  {} {}", "+".green(), hook.name()))
+            .collect();
+
+        let sections = [
+            (
+                "Variables:",
+                Self::map_override_lines(&merged.variables, &config.variables),
+            ),
+            ("Dotfiles:", dotfile_lines),
+            ("Packages:", pkg_lines),
+            ("Hooks:", hook_lines),
+            (
+                "Mise tools:",
+                Self::map_override_lines(&merged.mise.tools, &config.mise.tools),
+            ),
+        ];
+
+        if sections.iter().all(|(_, lines)| lines.is_empty()) {
+            println!(
+                "{}",
+                "(no overrides — host uses defaults as-is)".bright_black()
+            );
+            return Ok(());
+        }
+
+        for (label, lines) in sections {
+            if lines.is_empty() {
+                continue;
+            }
+            println!("{}", label.bold());
+            for line in lines {
+                println!("{}", line);
+            }
+            println!();
+        }
+
+        Ok(())
     }
 
     /// Get the roles for the resolved host, including inherited roles.
@@ -402,11 +728,19 @@ impl Cli {
 
     fn run_diff(&self) -> anyhow::Result<()> {
         let (config, host_name) = self.resolve_config_and_host()?;
+        let host_ctx = Self::build_host_context(&config, &host_name);
         let host_roles = Self::get_host_roles(&config, &host_name);
         let filtered_config = Self::filter_config_by_roles(config, &host_roles);
 
+        let state = State::load(self.get_state_path()).unwrap_or_else(|_| State::new());
+
         let diff_engine = DiffEngine::new();
-        let changes = diff_engine.diff(&filtered_config)?;
+        let mut changes = diff_engine.diff_dotfiles(&filtered_config, Some(&host_ctx))?;
+        changes.extend(diff_engine.diff_packages(&filtered_config)?);
+        changes.extend(Self::orphan_changes(&Self::find_orphans(
+            &state,
+            &filtered_config,
+        )));
 
         if changes.is_empty() {
             println!("{}", "No changes detected.".bright_black());
@@ -426,14 +760,19 @@ impl Cli {
             .iter()
             .filter(|c| matches!(c, Change::Modify { .. }))
             .count();
+        let remove_count = changes
+            .iter()
+            .filter(|c| matches!(c, Change::Remove { .. }))
+            .count();
 
-        if add_count > 0 || modify_count > 0 {
+        if add_count > 0 || modify_count > 0 || remove_count > 0 {
             println!();
             println!(
-                "{} {} to add, {} to modify",
+                "{} {} to add, {} to modify, {} to remove",
                 "Summary:".bold(),
                 add_count.to_string().green(),
-                modify_count.to_string().yellow()
+                modify_count.to_string().yellow(),
+                remove_count.to_string().red()
             );
         }
 
@@ -448,7 +787,134 @@ impl Cli {
         }
     }
 
-    fn run_apply(&self) -> anyhow::Result<()> {
+    /// Compute state entries whose target is no longer produced by the
+    /// (role-filtered) config — these were linked by a previous apply and
+    /// should be cleaned up.
+    fn find_orphans(state: &State, filtered_config: &Config) -> Vec<crate::state::DotfileState> {
+        let desired: std::collections::HashSet<String> = filtered_config
+            .dotfiles
+            .iter()
+            .filter_map(|d| crate::expand::expand_path_str(&d.target).ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+
+        state
+            .dotfiles
+            .iter()
+            .filter(|d| !desired.contains(&d.target))
+            .cloned()
+            .collect()
+    }
+
+    /// Preview entries for orphaned state dotfiles, shown by diff and apply.
+    fn orphan_changes(orphans: &[crate::state::DotfileState]) -> Vec<Change> {
+        orphans
+            .iter()
+            .map(|orphan| Change::Remove {
+                resource_type: crate::diff::ResourceType::Dotfile,
+                description: orphan.target.clone(),
+                reason: "removed from config".to_string(),
+            })
+            .collect()
+    }
+
+    /// Restore a backup into a now-free target slot. Directory backups were
+    /// created with rename, so they move back; file backups copy, then the
+    /// backup file is removed best-effort (the restore already succeeded).
+    fn restore_backup(backup_path: &Path, target: &Path) -> std::io::Result<()> {
+        if backup_path.is_dir() {
+            std::fs::rename(backup_path, target)
+        } else {
+            std::fs::copy(backup_path, target)?;
+            let _ = std::fs::remove_file(backup_path);
+            Ok(())
+        }
+    }
+
+    /// Remove symlinks recorded in state whose dotfile entry no longer exists
+    /// in the config: delete the mimic-created symlink, restore any backup,
+    /// clean up the rendered file, and untrack the entry.
+    fn cleanup_orphans(&self, orphans: &[crate::state::DotfileState], state: &mut State) {
+        for orphan in orphans {
+            let target = PathBuf::from(&orphan.target);
+            let present = target.exists() || target.is_symlink();
+
+            if present && !Self::is_mimic_symlink(&target, orphan) {
+                println!(
+                    "  {} Untracking {}: not a mimic-managed symlink (left in place)",
+                    "⚠".yellow(),
+                    target.display()
+                );
+                state.remove_dotfile(&orphan.target);
+                continue;
+            }
+
+            if present {
+                if let Err(e) = std::fs::remove_file(&target) {
+                    eprintln!(
+                        "  {} Failed to remove orphaned symlink {}: {}",
+                        "✗".red(),
+                        target.display(),
+                        e
+                    );
+                    continue; // keep tracking it so a later apply can retry
+                }
+                println!(
+                    "  {} Removed orphaned symlink: {}",
+                    "✓".green(),
+                    target.display()
+                );
+
+                if let Some(backup_path) = orphan.backup_path.as_deref().map(Path::new)
+                    && backup_path.exists()
+                {
+                    match Self::restore_backup(backup_path, &target) {
+                        Ok(()) => {
+                            println!("  {} Restored backup: {}", "✓".green(), target.display());
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "  {} Failed to restore backup for {}: {}",
+                                "✗".red(),
+                                target.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Remove the rendered file unless another state entry still uses it
+            if let Some(rendered) = &orphan.rendered_path {
+                let still_used = state.dotfiles.iter().any(|d| {
+                    d.target != orphan.target
+                        && d.rendered_path.as_deref() == Some(rendered.as_str())
+                });
+                if !still_used {
+                    let rendered_path = PathBuf::from(rendered);
+                    if rendered_path.exists()
+                        && let Err(e) = std::fs::remove_file(&rendered_path)
+                        && self.verbose
+                    {
+                        eprintln!(
+                            "  {} Failed to remove rendered file {}: {}",
+                            "⚠".yellow(),
+                            rendered_path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+
+            state.remove_dotfile(&orphan.target);
+        }
+    }
+
+    fn run_apply(&self, only: &[ApplySection], skip: &[ApplySection]) -> anyhow::Result<()> {
+        let enabled = |section: ApplySection| {
+            (only.is_empty() || only.contains(&section)) && !skip.contains(&section)
+        };
+
         let (config, host_name) = self.resolve_config_and_host()?;
         let host_ctx = Self::build_host_context(&config, &host_name);
 
@@ -456,17 +922,41 @@ impl Cli {
         let host_roles = Self::get_host_roles(&config, &host_name);
         let filtered_for_diff = Self::filter_config_by_roles(config.clone(), &host_roles);
 
-        let diff_engine = DiffEngine::new();
-        let changes = diff_engine.diff(&filtered_for_diff)?;
+        let state_path = self.get_state_path();
+        let mut state = State::load(&state_path).unwrap_or_else(|_| State::new());
 
-        if changes.is_empty() {
+        let orphans = if enabled(ApplySection::Dotfiles) {
+            Self::find_orphans(&state, &filtered_for_diff)
+        } else {
+            Vec::new()
+        };
+
+        let diff_engine = DiffEngine::new();
+        let mut changes = Vec::new();
+        if enabled(ApplySection::Dotfiles) {
+            changes.extend(diff_engine.diff_dotfiles(&filtered_for_diff, Some(&host_ctx))?);
+        }
+        if enabled(ApplySection::Packages) {
+            changes.extend(diff_engine.diff_packages(&filtered_for_diff)?);
+        }
+        changes.extend(Self::orphan_changes(&orphans));
+
+        // With an explicit --only hooks/mise, an empty diff is expected — the
+        // point is to run just those sections.
+        let sections_without_diff = !only.is_empty()
+            && ((enabled(ApplySection::Hooks) && !config.hooks.is_empty())
+                || (enabled(ApplySection::Mise) && !config.mise.tools.is_empty()));
+
+        if changes.is_empty() && !sections_without_diff {
             println!("{}", "No changes to apply.".bright_black());
             return Ok(());
         }
 
-        println!("{}", "Changes to apply:".bold());
-        for change in &changes {
-            println!("{}", change.format());
+        if !changes.is_empty() {
+            println!("{}", "Changes to apply:".bold());
+            for change in &changes {
+                println!("{}", change.format());
+            }
         }
 
         if self.dry_run {
@@ -475,7 +965,7 @@ impl Cli {
             return Ok(());
         }
 
-        if !self.yes {
+        if !self.yes && !changes.is_empty() {
             println!();
             use dialoguer::Confirm;
             let proceed = Confirm::new()
@@ -489,9 +979,6 @@ impl Cli {
             }
         }
 
-        let state_path = self.get_state_path();
-        let mut state = State::load(&state_path).unwrap_or_else(|_| State::new());
-
         state.active_host = host_name.clone();
 
         println!();
@@ -503,7 +990,16 @@ impl Cli {
             None
         };
 
-        for dotfile in &config.dotfiles {
+        if !orphans.is_empty() {
+            self.cleanup_orphans(&orphans, &mut state);
+        }
+
+        let dotfiles_to_link = if enabled(ApplySection::Dotfiles) {
+            config.dotfiles.as_slice()
+        } else {
+            &[]
+        };
+        for dotfile in dotfiles_to_link {
             if !should_apply_for_roles(&dotfile.only_roles, &dotfile.skip_roles, &host_ctx.roles) {
                 if self.verbose {
                     println!(
@@ -555,7 +1051,12 @@ impl Cli {
         let mut formulae: Vec<&str> = Vec::new();
         let mut casks: Vec<&config::Package> = Vec::new();
 
-        for package in &normalized_packages.homebrew {
+        let packages_to_install = if enabled(ApplySection::Packages) {
+            normalized_packages.homebrew.as_slice()
+        } else {
+            &[]
+        };
+        for package in packages_to_install {
             if !should_apply_for_roles(&package.only_roles, &package.skip_roles, &host_ctx.roles) {
                 if self.verbose {
                     println!("  {} {} (role mismatch)", "↷".bright_black(), package.name);
@@ -646,12 +1147,16 @@ impl Cli {
         }
 
         // Install zerobrew packages
-        let zb_packages: Vec<&str> = normalized_packages
-            .zerobrew
-            .iter()
-            .filter(|p| should_apply_for_roles(&p.only_roles, &p.skip_roles, &host_ctx.roles))
-            .map(|p| p.name.as_str())
-            .collect();
+        let zb_packages: Vec<&str> = if enabled(ApplySection::Packages) {
+            normalized_packages
+                .zerobrew
+                .iter()
+                .filter(|p| should_apply_for_roles(&p.only_roles, &p.skip_roles, &host_ctx.roles))
+                .map(|p| p.name.as_str())
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         if !zb_packages.is_empty() {
             if self.verbose {
@@ -699,7 +1204,7 @@ impl Cli {
 
         // Write the declared [mise] tools to mise's config before hooks run,
         // so a `mise` hook installs the tool set from this apply, not a stale one.
-        if !config.mise.tools.is_empty() {
+        if enabled(ApplySection::Mise) && !config.mise.tools.is_empty() {
             println!();
             if let Err(e) = crate::mise::generate_mise_config(&config) {
                 eprintln!("  {} Failed to write mise config: {}", "✗".red(), e);
@@ -708,7 +1213,7 @@ impl Cli {
             }
         }
 
-        if !config.hooks.is_empty() {
+        if enabled(ApplySection::Hooks) && !config.hooks.is_empty() {
             println!();
             println!("{}", "Running activation hooks...".bright_cyan().bold());
 
@@ -987,6 +1492,248 @@ impl Cli {
         Ok(())
     }
 
+    /// Read-only health check: config parses, hostname resolves, symlinks are
+    /// intact, rendered files aren't orphaned, templates haven't drifted, and
+    /// packages match the config. Never mutates anything; exits non-zero when
+    /// problems are found.
+    fn run_doctor(&self) -> anyhow::Result<()> {
+        println!("{}", "mimic doctor".bold());
+        println!();
+
+        let mut problems: Vec<String> = Vec::new();
+        let mut warnings: Vec<String> = Vec::new();
+
+        fn ok(msg: &str) {
+            println!("  {} {}", "✓".green(), msg);
+        }
+
+        // Config parses (and extends resolve)
+        let loaded = match self.find_config() {
+            Ok(path) => match self.load_config(&path) {
+                Ok(config) => {
+                    ok(&format!("config loads: {}", path.display()));
+                    Some(config)
+                }
+                Err(e) => {
+                    problems.push(format!("config failed to load: {:#}", e));
+                    None
+                }
+            },
+            Err(e) => {
+                problems.push(format!("{:#}", e));
+                None
+            }
+        };
+
+        // Hostname resolves to a host entry (same policy as apply/diff/render)
+        let mut resolved: Option<(Config, Option<String>)> = None;
+        if let Some(base) = loaded {
+            match self.resolve_host(base) {
+                Ok(HostResolution::NoHosts(config)) => {
+                    ok("no [hosts] entries — single-machine config");
+                    resolved = Some((config, None));
+                }
+                Ok(HostResolution::Matched { key, merged }) => {
+                    let roles = merged.resolved_host_roles(&key).unwrap_or_default();
+                    let roles_desc = if roles.is_empty() {
+                        "no roles".to_string()
+                    } else {
+                        format!("roles: {}", roles.join(", "))
+                    };
+                    ok(&format!("hostname matches host '{}' ({})", key, roles_desc));
+                    resolved = Some((merged, Some(key)));
+                }
+                Ok(HostResolution::Unmatched { requested, base }) => {
+                    warnings.push(Self::unmatched_host_message(&requested));
+                    resolved = Some((base, None));
+                }
+                Err(e) => problems.push(e.to_string()),
+            }
+        }
+
+        let state_path = self.get_state_path();
+        let state = State::load(&state_path).unwrap_or_else(|_| State::new());
+
+        if let Some((config, host_name)) = &resolved {
+            if let (Some(active), Some(current)) = (&state.active_host, host_name)
+                && active != current
+            {
+                warnings.push(format!(
+                    "state was last applied as host '{}', but current host resolves to '{}'",
+                    active, current
+                ));
+            }
+
+            let host_ctx = Self::build_host_context(config, host_name);
+            let host_roles = Self::get_host_roles(config, host_name);
+            let filtered = Self::filter_config_by_roles(config.clone(), &host_roles);
+
+            // Dotfile link health + template drift (via the diff engine)
+            let diff_engine = DiffEngine::new();
+            match diff_engine.diff_dotfiles(&filtered, Some(&host_ctx)) {
+                Ok(changes) => {
+                    // The diff engine already classifies dotfile trouble:
+                    // broken symlinks, hijacked targets, and template drift
+                    // all arrive as Modify with a reason. Add just means the
+                    // link hasn't been created yet.
+                    let mut healthy = 0;
+                    for change in changes {
+                        match change {
+                            Change::AlreadyCorrect { .. } => healthy += 1,
+                            Change::Add { description, .. } => {
+                                warnings.push(format!(
+                                    "not applied yet: {} (run 'mimic apply --only dotfiles')",
+                                    description
+                                ));
+                            }
+                            Change::Modify {
+                                description,
+                                reason,
+                                ..
+                            } => {
+                                problems.push(format!("{} — {}", description, reason));
+                            }
+                            Change::Remove { .. } => {}
+                        }
+                    }
+                    if healthy > 0 {
+                        ok(&format!("{} dotfile(s) linked correctly", healthy));
+                    }
+                }
+                Err(e) => problems.push(format!("dotfile check failed: {}", e)),
+            }
+
+            // State entries whose target left the config
+            for orphan in Self::find_orphans(&state, &filtered) {
+                warnings.push(format!(
+                    "orphaned state entry: {} (removed from config; next 'mimic apply' cleans it up)",
+                    orphan.target
+                ));
+            }
+
+            // Rendered files no longer referenced by state or config templates
+            if let Ok(rendered_dir) = crate::linker::rendered_dir()
+                && rendered_dir.is_dir()
+            {
+                let mut expected: std::collections::HashSet<PathBuf> = state
+                    .dotfiles
+                    .iter()
+                    .filter_map(|d| d.rendered_path.as_ref())
+                    .map(PathBuf::from)
+                    .collect();
+                for dotfile in filtered.dotfiles.iter().filter(|d| d.is_template()) {
+                    if let Ok(source) = crate::expand::expand_path_str(&dotfile.source)
+                        && let Ok(rendered) = crate::linker::rendered_path_for(&source)
+                    {
+                        expected.insert(rendered);
+                    }
+                }
+
+                if let Ok(entries) = std::fs::read_dir(&rendered_dir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        if !expected.contains(&entry.path()) {
+                            warnings.push(format!(
+                                "orphaned rendered file: {} (safe to delete)",
+                                entry.path().display()
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // Declared packages that aren't installed
+            match diff_engine.diff_packages(&filtered) {
+                Ok(changes) => {
+                    let missing: Vec<String> = changes
+                        .iter()
+                        .filter_map(|c| match c {
+                            Change::Add { description, .. } => Some(description.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    let total = changes.len();
+                    if missing.is_empty() {
+                        if total > 0 {
+                            ok(&format!("{} package(s) installed", total));
+                        }
+                    } else {
+                        for name in missing {
+                            warnings.push(format!(
+                                "package declared but not installed: {} (run 'mimic apply --only packages')",
+                                name
+                            ));
+                        }
+                    }
+                }
+                Err(e) => warnings.push(format!("package check failed: {}", e)),
+            }
+
+            // Installed-but-undeclared packages (informational)
+            match Self::unmanaged_packages(config) {
+                Ok((formulas, casks, zb)) => {
+                    let total = formulas.len() + casks.len() + zb.len();
+                    if total == 0 {
+                        ok("no unmanaged packages");
+                    } else {
+                        println!(
+                            "  {} {} unmanaged package(s) not in config (run 'mimic clean --dry-run' to list)",
+                            "○".bright_black(),
+                            total
+                        );
+                    }
+                }
+                Err(e) => {
+                    if self.verbose {
+                        println!(
+                            "  {} skipped unmanaged package check: {}",
+                            "○".bright_black(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        println!();
+        if !warnings.is_empty() {
+            println!("{}", "Warnings:".yellow().bold());
+            for warning in &warnings {
+                println!("  {} {}", "⚠".yellow(), warning);
+            }
+            println!();
+        }
+        if !problems.is_empty() {
+            println!("{}", "Problems:".red().bold());
+            for problem in &problems {
+                println!("  {} {}", "✗".red(), problem);
+            }
+            println!();
+            println!(
+                "{}",
+                format!(
+                    "{} problem(s), {} warning(s) found.",
+                    problems.len(),
+                    warnings.len()
+                )
+                .red()
+                .bold()
+            );
+            return Err(anyhow::anyhow!("__drift_detected__"));
+        }
+
+        if warnings.is_empty() {
+            println!("{}", "✓ No problems found".green().bold());
+        } else {
+            println!(
+                "{}",
+                format!("No problems, {} warning(s).", warnings.len())
+                    .yellow()
+                    .bold()
+            );
+        }
+        Ok(())
+    }
+
     /// Check whether `target` is still the symlink mimic created for this
     /// state entry, i.e. it points at the recorded source or rendered file.
     fn is_mimic_symlink(target: &Path, dotfile: &crate::state::DotfileState) -> bool {
@@ -1101,32 +1848,9 @@ impl Cli {
                 let backup_path = PathBuf::from(backup_path_str);
 
                 if backup_path.exists() {
-                    // Use rename for directory backups, copy for file backups
-                    let restore_result = if backup_path.is_dir() {
-                        std::fs::rename(&backup_path, &target)
-                    } else {
-                        std::fs::copy(&backup_path, &target).map(|_| ())
-                    };
-                    match restore_result {
+                    match Self::restore_backup(&backup_path, &target) {
                         Ok(()) => {
                             backups_restored += 1;
-                            // Clean up the backup file after successful restore
-                            // (rename already moved it; copy leaves it behind)
-                            if backup_path.exists()
-                                && let Err(e) = if backup_path.is_dir() {
-                                    std::fs::remove_dir_all(&backup_path)
-                                } else {
-                                    std::fs::remove_file(&backup_path)
-                                }
-                                && self.verbose
-                            {
-                                eprintln!(
-                                    "  {} Could not remove backup file {}: {}",
-                                    "⚠".yellow(),
-                                    backup_path.display(),
-                                    e
-                                );
-                            }
                             println!(
                                 "  {} Restored backup: {} → {}",
                                 "✓".green(),
@@ -1225,34 +1949,10 @@ impl Cli {
     fn run_render(&self, template: &str) -> anyhow::Result<()> {
         use crate::template::render_file;
 
-        let config_path = self.find_config()?;
-
-        if self.verbose {
-            println!(
-                "{} {}",
-                "Loading config:".bright_black(),
-                config_path.display()
-            );
-        }
-
-        let base_config = Config::from_file(&config_path)?;
-
-        let host_name = if let Some(host) = &self.host {
-            host.clone()
-        } else {
-            Self::detect_hostname()
-        };
-
-        let merged_config = if !base_config.hosts.is_empty() {
-            if self.verbose {
-                println!("{} {}", "Using host:".bright_black(), host_name);
-            }
-            base_config.with_host(&host_name)?
-        } else {
-            base_config
-        };
-
-        let host_ctx = Self::build_host_context(&merged_config, &Some(host_name));
+        // Honors --host, so any host's output can be previewed from any
+        // machine (e.g. `mimic render tpl.hbs --host elara`).
+        let (merged_config, host_name) = self.resolve_config_and_host()?;
+        let host_ctx = Self::build_host_context(&merged_config, &host_name);
 
         let template_path = PathBuf::from(template);
         let rendered = render_file(&template_path, &merged_config.variables, &host_ctx)?;
@@ -1309,7 +2009,7 @@ impl Cli {
             }
 
             SecretsCommands::Export => {
-                let config = Config::from_file(&self.find_config()?)?;
+                let config = self.load_config(&self.find_config()?)?;
                 let all_secrets = secrets::get_all_secrets();
 
                 if all_secrets.is_empty() {
@@ -1481,17 +2181,21 @@ impl Cli {
             }
 
             let apply_cli = Cli {
-                command: Commands::Apply,
+                command: Commands::Apply {
+                    only: Vec::new(),
+                    skip: Vec::new(),
+                },
                 config: Some(config_path),
                 host: self.host.clone(),
                 yes: true,
                 dry_run: self.dry_run,
                 verbose: self.verbose,
+                offline: self.offline,
                 state: self.state.clone(),
                 branch: self.branch.clone(),
             };
 
-            apply_cli.run_apply()?;
+            apply_cli.run_apply(&[], &[])?;
         }
 
         println!();
@@ -1595,7 +2299,7 @@ impl Cli {
                     target
                 )
             })?;
-            let config = Config::from_file(&config_path)?;
+            let config = self.load_config(&config_path)?;
 
             for dotfile in &config.dotfiles {
                 let config_target = crate::expand::expand_path_str(&dotfile.target)
@@ -1665,9 +2369,11 @@ impl Cli {
         Ok(())
     }
 
-    fn run_clean(&self) -> anyhow::Result<()> {
-        let (config, _host_name) = self.resolve_config_and_host()?;
-
+    /// Installed-but-undeclared packages: brew leaves, casks, and (when
+    /// configured) zerobrew packages that don't appear in the config.
+    fn unmanaged_packages(
+        config: &Config,
+    ) -> anyhow::Result<(Vec<String>, Vec<String>, Vec<String>)> {
         // Config entries may use tap-qualified names (sometap/foo); brew
         // reports short names, so compare on the final path segment.
         fn short_name(name: &str) -> &str {
@@ -1700,17 +2406,17 @@ impl Cli {
         let installed_formulas = homebrew.list_leaves()?;
         let installed_casks = homebrew.list_installed_casks()?;
 
-        let extra_formulas: Vec<&String> = installed_formulas
-            .iter()
+        let extra_formulas: Vec<String> = installed_formulas
+            .into_iter()
             .filter(|p| !config_formulas.contains(p.as_str()))
             .collect();
-        let extra_casks: Vec<&String> = installed_casks
-            .iter()
+        let extra_casks: Vec<String> = installed_casks
+            .into_iter()
             .filter(|p| !config_casks.contains(p.as_str()))
             .collect();
 
         // For zerobrew: only attempt list if there are zb packages configured, to avoid
-        // failing the whole clean command if zb is not installed when not in use.
+        // failing the whole command if zb is not installed when not in use.
         let zerobrew = ZerobrewManager::new();
         let extra_zb: Vec<String> = if !config_zb.is_empty() {
             zerobrew
@@ -1721,6 +2427,16 @@ impl Cli {
         } else {
             Vec::new()
         };
+
+        Ok((extra_formulas, extra_casks, extra_zb))
+    }
+
+    fn run_clean(&self) -> anyhow::Result<()> {
+        let (config, _host_name) = self.resolve_config_and_host()?;
+
+        let (extra_formulas, extra_casks, extra_zb) = Self::unmanaged_packages(&config)?;
+        let homebrew = HomebrewManager::new();
+        let zerobrew = ZerobrewManager::new();
 
         if extra_formulas.is_empty() && extra_casks.is_empty() && extra_zb.is_empty() {
             println!(
