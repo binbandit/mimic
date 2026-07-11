@@ -499,7 +499,12 @@ config = "profiles/work/mimic.toml"
 
 How it works:
 - Extended repos are cloned into `~/.config/mimic/extends/`
-- Repos are pulled on each config load to keep them current
+- Repos are pulled at most once per hour (override with `MIMIC_EXTENDS_TTL=<seconds>`;
+  set `0` to pull on every load) — so `diff`, `render`, and `hosts` don't hit
+  the network on every run
+- `--offline` skips fetching entirely and uses the cache as-is (fails only if a
+  repo has never been fetched); if a pull fails (no network, expired
+  credentials), mimic warns and falls back to the cached copy
 - Extended configs are merged first, then your local config overrides conflicts
 - Cyclic `[[extends]]` chains are detected and reported with the full chain
 
@@ -565,13 +570,16 @@ These options are available on all commands:
 - `--yes, -y` - Skip interactive confirmations
 - `--dry-run, -n` - Preview changes without applying
 - `--verbose, -v` - Show detailed output
+- `--offline` - Never touch the network: use cached `extends` repos as-is
 - `--branch <NAME>` - Use an isolated initialized branch workspace (`~/.config/mimic/repos/<NAME>/`)
 
 `--branch` is especially useful with `init`, `apply`, and `diff` when you want to trial branch-specific dotfiles without affecting your default setup.
 
 ### `mimic apply`
 
-Apply the configuration by creating symlinks and installing packages.
+Apply the configuration by creating symlinks and installing packages. Symlinks
+created by a previous apply whose dotfile entry has since been removed from the
+config are cleaned up automatically (backups are restored if one was taken).
 
 ```bash
 mimic apply [OPTIONS]
@@ -580,6 +588,8 @@ mimic apply [OPTIONS]
 **Options:**
 - `--config <PATH>` - Path to config file (default: `./mimic.toml` or `~/.config/mimic/config.toml`)
 - `--state <PATH>` - Path to state file (default: `~/.config/mimic/state.toml`)
+- `--only <SECTIONS>` - Apply only these sections: `dotfiles`, `packages`, `hooks`, `mise` (comma-separated or repeated)
+- `--skip <SECTIONS>` - Apply everything except these sections
 - `--yes, -y` - Skip confirmation prompts, auto-backup conflicts
 - `--dry-run, -n` - Show what would happen without making changes
 - `--verbose, -v` - Show detailed output
@@ -592,6 +602,15 @@ mimic apply
 mimic apply --dry-run
 
 mimic apply --yes --config ~/dotfiles/mimic.toml
+
+# Re-link dotfiles without touching packages or running hooks
+mimic apply --only dotfiles
+
+# Everything except the (potentially slow) maintenance hooks
+mimic apply --skip hooks
+
+# Just run hooks (e.g. after fixing a tool manually)
+mimic apply --only hooks
 
 mimic apply --verbose
 ```
@@ -612,7 +631,13 @@ mimic diff [OPTIONS]
 - `+ dotfile` - New symlink would be created (green)
 - `+ package` - Package would be installed (green)
 - `~ dotfile` - Symlink would be modified (yellow)
+- `- dotfile` - Symlink removed on next apply — entry left the config (red)
 - `✓` - Already correct (gray)
+
+Template dotfiles are also checked for content drift: the template is
+re-rendered and compared against the live rendered file, so hand-edits to a
+live config (or changed variables) show up as `~ dotfile ... (rendered content
+drifted)`.
 
 **Examples:**
 
@@ -645,6 +670,39 @@ mimic status [OPTIONS]
 mimic status
 
 mimic status --verbose
+```
+
+### `mimic doctor`
+
+Read-only health check for the whole setup. Never modifies anything.
+
+```bash
+mimic doctor [OPTIONS]
+```
+
+**Checks:**
+- Config parses (including `extends` repos)
+- The detected hostname matches a `[hosts.*]` entry (or warns loudly)
+- Symlinks are intact: broken links, targets replaced by real files, links
+  pointing at the wrong source
+- Rendered template output matches a fresh render (catches hand-edited live
+  files and changed templates/variables)
+- Orphaned entries: state entries whose dotfile left the config, and stale
+  files in `~/.mimic/rendered/`
+- Packages: declared-but-missing, plus a count of installed-but-undeclared
+  (see `mimic clean --dry-run` for the full list)
+
+**Exit codes:**
+- `0` - No problems (warnings may still be printed)
+- `1` - Problems found
+
+**Examples:**
+
+```bash
+mimic doctor
+
+# Health-check as a specific host, without network access
+mimic doctor --host work-laptop --offline
 ```
 
 ### `mimic undo`
@@ -760,25 +818,31 @@ mimic hosts <COMMAND>
 ```
 
 **Subcommands:**
-- `list` - List all configured hosts
-- `show <HOST>` - Show merged configuration for a specific host
+- `list` - List all configured hosts with their effective (inherited) roles, aliases, and inheritance
+- `show <HOST>` - Show merged (effective) configuration for a specific host
+- `show <HOST> --diff` - Show only what the host overrides or adds vs the defaults
+- `show <HOST> --raw` - Show the host's own section without merging defaults
 
 **Examples:**
 
 ```bash
-# List all available hosts
+# List all available hosts (roles include inherited ones)
 mimic hosts list
 
-# Show what config a specific host would use
+# Show the effective config a specific host would use
 mimic hosts show work-laptop
 
-# Preview configuration inheritance
-mimic hosts show personal-macbook --verbose
+# Review a host: only its overrides, not the whole merged config
+mimic hosts show work-laptop --diff
+
+# Inspect the unmerged section as written in the config
+mimic hosts show work-laptop --raw
 ```
 
 **Behavior:**
 - Lists all hosts defined in `[hosts.*]` sections
-- Shows merged config after inheritance resolution
+- Shows merged config after inheritance resolution; variables print sorted
+- `show` accepts aliases and short names, same as hostname detection
 - Useful for debugging multi-machine setups
 
 ### `mimic render`
@@ -794,7 +858,7 @@ mimic render <TEMPLATE> [OPTIONS]
 
 **Options:**
 - `--config <PATH>` - Path to config file (for variables)
-- `--host <HOST>` - Render with host-specific variables
+- `--host <HOST>` - Render with host-specific variables (any configured host, not just this machine)
 
 **Examples:**
 
@@ -802,7 +866,7 @@ mimic render <TEMPLATE> [OPTIONS]
 # Preview template output
 mimic render dotfiles/config.fish.tmpl
 
-# Render with specific host variables
+# Preview what another machine will get, from any machine
 mimic render dotfiles/gitconfig.tmpl --host work-laptop
 
 # Check what variables are available
@@ -885,6 +949,11 @@ type = "formula"
 only_roles = ["work"]
 ```
 
+**Strict parsing:** unknown or misspelled keys anywhere in the config are a
+hard error, not a silent no-op. A typo like `tempalte = true` or an
+unsupported section fails immediately at load time instead of quietly doing
+nothing on the next machine you set up.
+
 ### Variables section
 
 Define custom variables that can be used in templates (future feature) and help document your configuration.
@@ -957,6 +1026,44 @@ only_roles = ["work"]
 - zerobrew (`zb`) is a performance-optimized client for the Homebrew ecosystem — 5–20× faster installs via content-addressable storage and APFS clonefiles
 - It is experimental; use it alongside Homebrew for packages where speed matters
 - If `zb` is not installed, mimic will error clearly and point you to `https://zerobrew.rs`
+
+### Hosts
+
+Per-machine overrides live under `[hosts.<name>]`. Every field from the top
+level (variables, dotfiles, packages, hooks, secrets, mise) can be overridden
+or extended per host.
+
+```toml
+[hosts.base-mac]
+roles = ["mac"]
+[hosts.base-mac.variables]
+shell = "fish"
+
+[hosts.work-laptop]
+inherits = "base-mac"           # merge chain: defaults → base-mac → work-laptop
+aliases = ["wl", "work-laptop.corp.example.com"]
+roles = ["work"]                # effective roles: mac + work
+[hosts.work-laptop.variables]
+email = "me@company.com"
+```
+
+**Inheritance (`inherits`):** hosts can inherit from another host. The chain is
+merged ancestor-first, so children override parents, and parents override the
+global defaults. Roles accumulate across the chain. Cycles and unknown parents
+are load-time errors.
+
+**Hostname matching:** the current machine's hostname is matched against host
+entries in tiers — first exact key/alias match, then case-insensitive, then by
+first label (so a `[hosts.elara]` entry matches `elara.local` and
+`elara.localdomain`, and vice versa). If several entries match the same name,
+mimic errors and asks for `--host`. If *nothing* matches, mimic prints a loud
+warning and applies only the defaults:
+
+```
+Warning: no [hosts] entry matches 'elara.localdomain' — applying defaults only.
+```
+
+Use `mimic doctor` to verify which host entry your machine resolves to.
 
 ## Configuration File Discovery
 

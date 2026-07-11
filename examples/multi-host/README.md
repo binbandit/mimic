@@ -174,7 +174,19 @@ If your machine's hostname matches a configured host:
 mimic apply
 ```
 
-mimic will automatically select the matching host configuration.
+mimic will automatically select the matching host configuration. Matching is
+forgiving: exact key or alias first, then case-insensitive, then by first
+label — so `[hosts.work-laptop]` matches a machine reporting
+`work-laptop.local` or `Work-Laptop.localdomain`. You can also declare
+alternate names explicitly:
+
+```toml
+[hosts.work-laptop]
+aliases = ["wl", "work-laptop.corp.example.com"]
+```
+
+If no host entry matches, mimic prints a loud warning and applies only the
+defaults. Run `mimic doctor` to see which host your machine resolves to.
 
 ## Real-World Scenarios
 

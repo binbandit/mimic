@@ -15,7 +15,7 @@ mimic follows a declarative configuration model: users specify their desired sta
        v
 ┌──────────────────────────────────────────┐
 │          CLI Commands                     │
-│  apply │ diff │ status │ undo             │
+│  apply │ diff │ status │ doctor │ undo    │
 └──────┬───────────────────────────────────┘
        │
        v
@@ -141,8 +141,13 @@ pub fn scan_for_secrets(paths: &[PathBuf]) -> Result<Vec<SecretMatch>>
 
 **Responsibilities:**
 - Load TOML files from disk
-- Deserialize into strongly-typed Rust structs
-- Validate configuration structure
+- Deserialize into strongly-typed Rust structs (`deny_unknown_fields`: typos
+  and unsupported keys are hard errors, not silent no-ops)
+- Resolve `[[extends]]` repos with a TTL-based fetch cache (1 hour default,
+  `MIMIC_EXTENDS_TTL` override) and an `--offline` mode that never fetches
+- Merge host inheritance chains (`inherits`) ancestor-first
+- Resolve hostnames to host entries via exact, alias, case-insensitive, and
+  first-label matching (`resolve_host_name`)
 - Provide access to variables, dotfiles, and packages
 
 **Key types:**
@@ -334,23 +339,32 @@ impl ZerobrewManager {
 **Key functions:**
 ```rust
 pub fn diff(&self, config: &Config) -> Result<Vec<Change>>
+pub fn diff_dotfiles(&self, config: &Config, host: Option<&HostContext>) -> Result<Vec<Change>>
+pub fn diff_packages(&self, config: &Config) -> Result<Vec<Change>>
 
 pub enum Change {
     Add { resource_type: ResourceType, description: String },
     Modify { resource_type: ResourceType, description: String, reason: String },
+    Remove { resource_type: ResourceType, description: String, reason: String },
     AlreadyCorrect { description: String },
 }
 ```
 
 **Algorithm:**
 - For dotfiles: check symlink existence, read target, canonicalize paths, compare
+- For template dotfiles whose symlink is correct (and a `HostContext` is given):
+  re-render the template and compare against the live rendered file to detect
+  content drift (hand-edited live files, changed templates/variables)
 - For packages: call `HomebrewManager::is_installed()` for `[packages.homebrew]` entries, `ZerobrewManager::is_installed()` for `[packages.zerobrew]` entries
 - Returns all changes (including AlreadyCorrect for comprehensive view)
+- `Remove` entries are produced by the CLI layer for state entries whose
+  target left the config (orphans), since only the CLI has the state file
 
 **Design decisions:**
-- Additive-only diff (no Remove variant in MVP)
 - Canonical path comparison handles relative symlinks correctly
 - Pretty formatting with `colored` crate for terminal output
+- Split into `diff_dotfiles`/`diff_packages` so `apply --only <section>` can
+  diff exactly what it will touch
 
 ### CLI (`src/cli.rs`)
 
@@ -365,19 +379,26 @@ pub enum Change {
 **Commands:**
 
 #### `apply`
-1. Load config
-2. Run diff engine
-3. Show preview
-4. Prompt for confirmation (unless `--yes` or `--dry-run`)
-5. Apply dotfiles with conflict resolution
-6. Install packages
-7. Save state
+1. Load config (resolve host by exact/alias/first-label match)
+2. Compute orphans: state entries whose target left the config
+3. Run diff engine for the enabled sections (`--only`/`--skip`)
+4. Show preview (including `- dotfile` removals)
+5. Prompt for confirmation (unless `--yes` or `--dry-run`)
+6. Clean up orphans (remove mimic-owned symlinks, restore backups, delete rendered files, untrack)
+7. Apply dotfiles with conflict resolution
+8. Install packages
+9. Write mise config, run hooks
+10. Save state
+
+Sections can be scoped with `--only dotfiles,packages,hooks,mise` or
+`--skip <sections>`; disabled sections are neither diffed nor executed.
 
 #### `diff`
 1. Load config
-2. Run diff engine
-3. Print changes with colored output
-4. Show summary (X to add, Y to modify)
+2. Run diff engine (with host context, so template content drift is detected)
+3. Add `Remove` entries for orphaned state targets
+4. Print changes with colored output
+5. Show summary (X to add, Y to modify, Z to remove)
 
 #### `status`
 1. Load state file
@@ -385,6 +406,12 @@ pub enum Change {
 3. Check each package installation
 4. Report drift (missing, wrong target, etc.)
 5. Exit with code 1 if drift detected
+
+#### `doctor`
+Read-only health check; never mutates. Verifies config parse, hostname→host
+resolution, symlink health, rendered-template drift, orphaned state entries
+and rendered files, and declared-vs-installed packages. Exits 1 when problems
+are found.
 
 #### `undo`
 1. Load state file
@@ -396,9 +423,11 @@ pub enum Change {
 **Global flags:**
 - `--config <PATH>` - Config file location
 - `--state <PATH>` - State file location
+- `--host <NAME>` - Select host configuration explicitly
 - `--yes, -y` - Skip prompts, auto-backup
 - `--dry-run, -n` - Preview only
 - `--verbose, -v` - Detailed output
+- `--offline` - Use cached extends repos without fetching
 
 ### Error Handling (`src/error.rs`)
 
