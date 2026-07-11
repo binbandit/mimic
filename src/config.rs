@@ -7,7 +7,16 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Options controlling how a config file is loaded.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LoadOptions {
+    /// Never touch the network: use cached `extends` repos as-is and fail if
+    /// one has never been cloned.
+    pub offline: bool,
+}
+
 #[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub extends: Vec<ExtendsRepo>,
@@ -35,6 +44,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ExtendsRepo {
     pub repo: String,
 
@@ -50,9 +60,15 @@ fn default_extends_config() -> String {
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct HostConfig {
     #[serde(default)]
     pub inherits: Option<String>,
+
+    /// Alternate hostnames that resolve to this host entry
+    /// (e.g. `aliases = ["elara", "elara.local"]`).
+    #[serde(default)]
+    pub aliases: Vec<String>,
 
     #[serde(default)]
     pub roles: Vec<String>,
@@ -77,18 +93,21 @@ pub struct HostConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SecretMetadata {
     pub description: Option<String>,
     pub env_var: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct MiseSection {
     #[serde(default)]
     pub tools: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Dotfile {
     pub source: String,
     pub target: String,
@@ -108,6 +127,7 @@ impl Dotfile {
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Packages {
     #[serde(default)]
     pub homebrew: Vec<Package>,
@@ -184,6 +204,7 @@ impl Packages {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Package {
     pub name: String,
 
@@ -245,13 +266,21 @@ impl std::str::FromStr for Config {
 
 impl Config {
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        Self::from_file_with_options(path, LoadOptions::default())
+    }
+
+    pub fn from_file_with_options<P: AsRef<Path>>(
+        path: P,
+        options: LoadOptions,
+    ) -> anyhow::Result<Self> {
         let mut loading_stack = Vec::new();
-        Self::from_file_internal(path.as_ref(), &mut loading_stack)
+        Self::from_file_internal(path.as_ref(), &mut loading_stack, options)
     }
 
     fn from_file_internal(
         path_ref: &Path,
         loading_stack: &mut Vec<PathBuf>,
+        options: LoadOptions,
     ) -> anyhow::Result<Self> {
         use anyhow::Context;
         let resolved_path = path_ref
@@ -291,7 +320,7 @@ impl Config {
                     .or_else(|_| std::env::current_dir())
                     .unwrap_or_else(|_| config_dir.to_path_buf());
                 config.resolve_source_paths(&config_dir);
-                config = config.resolve_extends(loading_stack)?;
+                config = config.resolve_extends(loading_stack, options)?;
             }
 
             Ok(config)
@@ -301,7 +330,11 @@ impl Config {
         result
     }
 
-    fn resolve_extends(mut self, loading_stack: &mut Vec<PathBuf>) -> anyhow::Result<Self> {
+    fn resolve_extends(
+        mut self,
+        loading_stack: &mut Vec<PathBuf>,
+        options: LoadOptions,
+    ) -> anyhow::Result<Self> {
         if self.extends.is_empty() {
             return Ok(self);
         }
@@ -312,9 +345,9 @@ impl Config {
         let mut merged = Config::default();
 
         for extend in extends {
-            let extended_config_path = Self::ensure_extended_repo(&extend)?;
-            let extended =
-                Self::from_file_internal(&extended_config_path, loading_stack).map_err(|e| {
+            let extended_config_path = Self::ensure_extended_repo(&extend, options)?;
+            let extended = Self::from_file_internal(&extended_config_path, loading_stack, options)
+                .map_err(|e| {
                     anyhow::anyhow!(
                         "Failed to load extended config from {}: {}",
                         extended_config_path.display(),
@@ -383,7 +416,7 @@ impl Config {
         }
     }
 
-    fn ensure_extended_repo(extend: &ExtendsRepo) -> anyhow::Result<PathBuf> {
+    fn ensure_extended_repo(extend: &ExtendsRepo, options: LoadOptions) -> anyhow::Result<PathBuf> {
         use anyhow::Context;
         let base_dirs = directories::BaseDirs::new()
             .ok_or_else(|| anyhow::anyhow!("Failed to determine home directory"))?;
@@ -408,12 +441,35 @@ impl Config {
         }
 
         if repo_dir.exists() {
-            Self::git_update_extended_repo(&repo_dir, extend)?;
+            if options.offline {
+                // Use the cached checkout as-is.
+            } else if Self::extends_cache_is_fresh(&repo_dir) {
+                // Recently fetched — skip the network round-trip entirely.
+            } else {
+                match Self::git_update_extended_repo(&repo_dir, extend) {
+                    Ok(()) => Self::touch_extends_fetch_stamp(&repo_dir),
+                    Err(e) => {
+                        // A stale cache beats a hard failure (planes, sandboxes,
+                        // CI without credentials). Loud warning so it isn't silent.
+                        eprintln!(
+                            "Warning: failed to update extends repo '{}', using cached copy.\n  {}",
+                            extend.repo, e
+                        );
+                    }
+                }
+            }
         } else {
+            if options.offline {
+                return Err(anyhow::anyhow!(
+                    "Offline mode: extends repo '{}' has never been fetched\n\nTo fix:\n  - Run once without --offline to populate the cache",
+                    extend.repo
+                ));
+            }
             if let Some(parent) = repo_dir.parent() {
                 fs::create_dir_all(parent)?;
             }
             Self::git_clone_extended_repo(&repo_dir, extend)?;
+            Self::touch_extends_fetch_stamp(&repo_dir);
         }
 
         let config_path = repo_dir.join(&extend.config);
@@ -609,6 +665,38 @@ impl Config {
         format!("{}_{}", id, digest)
     }
 
+    /// How long a fetched extends repo is considered fresh (no `git pull` on
+    /// load). Defaults to 1 hour; override in seconds via MIMIC_EXTENDS_TTL.
+    fn extends_ttl() -> std::time::Duration {
+        let secs = std::env::var("MIMIC_EXTENDS_TTL")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(3600);
+        std::time::Duration::from_secs(secs)
+    }
+
+    fn extends_fetch_stamp_path(repo_dir: &Path) -> PathBuf {
+        repo_dir.join(".git").join("mimic-fetch-stamp")
+    }
+
+    fn touch_extends_fetch_stamp(repo_dir: &Path) {
+        // Best-effort: a missing stamp only means the next load pulls again.
+        let _ = fs::write(Self::extends_fetch_stamp_path(repo_dir), b"");
+    }
+
+    fn extends_cache_is_fresh(repo_dir: &Path) -> bool {
+        let ttl = Self::extends_ttl();
+        if ttl.is_zero() {
+            return false;
+        }
+        fs::metadata(Self::extends_fetch_stamp_path(repo_dir))
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|mtime| mtime.elapsed().ok())
+            .map(|age| age < ttl)
+            .unwrap_or(false)
+    }
+
     /// Resolve all relative dotfile source paths against the given base directory.
     /// This ensures source paths work regardless of the current working directory.
     pub fn resolve_source_paths(&mut self, base_dir: &Path) {
@@ -630,6 +718,57 @@ impl Config {
         } else {
             base_dir.join(p).to_string_lossy().to_string()
         }
+    }
+
+    /// Resolve a detected or user-supplied hostname to a `[hosts.*]` key.
+    ///
+    /// Matching tiers (first tier with matches wins):
+    /// 1. exact match on the host key or one of its `aliases`
+    /// 2. case-insensitive match on key or alias
+    /// 3. first-label match: `elara` matches `elara.local`/`elara.localdomain`
+    ///    (compared case-insensitively against keys and aliases)
+    ///
+    /// Returns `Ok(None)` when nothing matches, and an error when a tier is
+    /// ambiguous (two host entries claim the same name).
+    pub fn resolve_host_name(&self, name: &str) -> anyhow::Result<Option<String>> {
+        fn first_label(s: &str) -> &str {
+            s.split('.').next().unwrap_or(s)
+        }
+
+        type Matcher = fn(&str, &str) -> bool;
+        let tiers: [Matcher; 3] = [
+            |candidate, name| candidate == name,
+            |candidate, name| candidate.eq_ignore_ascii_case(name),
+            |candidate, name| first_label(candidate).eq_ignore_ascii_case(first_label(name)),
+        ];
+
+        for tier in tiers {
+            let mut matches: Vec<String> = self
+                .hosts
+                .iter()
+                .filter(|(key, host)| {
+                    std::iter::once(key.as_str())
+                        .chain(host.aliases.iter().map(String::as_str))
+                        .any(|candidate| tier(candidate, name))
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            matches.sort(); // deterministic winner and error message
+
+            match matches.len() {
+                0 => continue,
+                1 => return Ok(Some(matches.remove(0))),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Hostname '{}' matches multiple host entries: {}\n\nTo fix:\n  - Use --host to pick one explicitly\n  - Or remove the overlapping aliases",
+                        name,
+                        matches.join(", ")
+                    ));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Resolve a host's inheritance chain: furthest ancestor first, the

@@ -50,6 +50,7 @@ fn test_host_merge() {
         "personal".to_string(),
         HostConfig {
             inherits: None,
+            aliases: vec![],
             roles: vec!["personal".to_string()],
             variables: host_vars,
             dotfiles: vec![],
@@ -436,5 +437,111 @@ fn test_host_package_overrides_base_entry() {
         docker[0].only_roles.as_deref(),
         Some(&["work".to_string()][..]),
         "the host's role restriction must win over the base entry"
+    );
+}
+
+#[test]
+fn test_resolve_host_name_exact_and_alias() {
+    let config_str = r#"
+        [hosts."elara.local"]
+        aliases = ["ellie"]
+
+        [hosts.work-laptop]
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+
+    assert_eq!(
+        config.resolve_host_name("elara.local").unwrap().unwrap(),
+        "elara.local"
+    );
+    assert_eq!(
+        config.resolve_host_name("ellie").unwrap().unwrap(),
+        "elara.local"
+    );
+    assert_eq!(
+        config.resolve_host_name("work-laptop").unwrap().unwrap(),
+        "work-laptop"
+    );
+}
+
+#[test]
+fn test_resolve_host_name_case_insensitive() {
+    let config_str = r#"
+        [hosts.Elara]
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    assert_eq!(config.resolve_host_name("elara").unwrap().unwrap(), "Elara");
+}
+
+#[test]
+fn test_resolve_host_name_first_label() {
+    let config_str = r#"
+        [hosts.elara]
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+
+    // Detected FQDN forms resolve to the short host key and vice versa
+    assert_eq!(
+        config.resolve_host_name("elara.local").unwrap().unwrap(),
+        "elara"
+    );
+    assert_eq!(
+        config
+            .resolve_host_name("elara.localdomain")
+            .unwrap()
+            .unwrap(),
+        "elara"
+    );
+
+    let config_str = r#"
+        [hosts."elara.local"]
+    "#;
+    let config: Config = toml::from_str(config_str).unwrap();
+    assert_eq!(
+        config.resolve_host_name("elara").unwrap().unwrap(),
+        "elara.local"
+    );
+}
+
+#[test]
+fn test_resolve_host_name_no_match() {
+    let config_str = r#"
+        [hosts.elara]
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    assert!(config.resolve_host_name("callisto").unwrap().is_none());
+}
+
+#[test]
+fn test_resolve_host_name_prefers_exact_over_fuzzy() {
+    let config_str = r#"
+        [hosts.elara]
+
+        [hosts."elara.local"]
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    // Exact match wins even though both first labels match
+    assert_eq!(config.resolve_host_name("elara").unwrap().unwrap(), "elara");
+}
+
+#[test]
+fn test_resolve_host_name_ambiguous_is_error() {
+    let config_str = r#"
+        [hosts."elara.local"]
+
+        [hosts."elara.localdomain"]
+    "#;
+
+    let config: Config = toml::from_str(config_str).unwrap();
+    let err = config.resolve_host_name("elara").unwrap_err().to_string();
+    assert!(
+        err.contains("matches multiple host entries"),
+        "got: {}",
+        err
     );
 }

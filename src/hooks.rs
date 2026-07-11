@@ -65,6 +65,7 @@ pub enum Hook {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CargoPackage {
     pub name: String,
     pub git: String,

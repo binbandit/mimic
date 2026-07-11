@@ -508,3 +508,66 @@ target = "~/.gitconfig"
         );
     }
 }
+
+#[test]
+fn test_unknown_top_level_key_is_error() {
+    let toml_str = r#"
+        [variables]
+        editor = "nvim"
+
+        [proxyconfig]
+        url = "http://proxy"
+    "#;
+
+    let err = Config::from_str(toml_str).unwrap_err().to_string();
+    assert!(err.contains("unknown field"), "got: {}", err);
+}
+
+#[test]
+fn test_unknown_dotfile_key_is_error() {
+    let toml_str = r#"
+        [[dotfiles]]
+        source = "zshrc"
+        target = "~/.zshrc"
+        tempalte = true
+    "#;
+
+    let err = Config::from_str(toml_str).unwrap_err().to_string();
+    assert!(err.contains("unknown field"), "got: {}", err);
+}
+
+#[test]
+fn test_unknown_host_key_is_error() {
+    let toml_str = r#"
+        [hosts.work]
+        role = ["work"]
+    "#;
+
+    let err = Config::from_str(toml_str).unwrap_err().to_string();
+    assert!(err.contains("unknown field"), "got: {}", err);
+}
+
+#[test]
+fn test_unknown_packages_key_is_error() {
+    let toml_str = r#"
+        [packages]
+        brews = ["git"]
+    "#;
+
+    let err = Config::from_str(toml_str).unwrap_err().to_string();
+    assert!(err.contains("unknown field"), "got: {}", err);
+}
+
+#[test]
+fn test_host_aliases_parse() {
+    let toml_str = r#"
+        [hosts.work]
+        aliases = ["work.local", "wrk"]
+    "#;
+
+    let config = Config::from_str(toml_str).unwrap();
+    assert_eq!(
+        config.hosts.get("work").unwrap().aliases,
+        vec!["work.local", "wrk"]
+    );
+}
