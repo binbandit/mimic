@@ -66,6 +66,16 @@ impl HomebrewManager {
             .is_some_and(|installed| installed.iter().any(|pkg| pkg == name)))
     }
 
+    /// List installed formulae, or `Ok(None)` when brew is missing.
+    pub fn try_list_installed_formulae(&self) -> Result<Option<Vec<String>>, anyhow::Error> {
+        try_list_brew("--formula")
+    }
+
+    /// List installed casks, or `Ok(None)` when brew is missing.
+    pub fn try_list_installed_casks(&self) -> Result<Option<Vec<String>>, anyhow::Error> {
+        try_list_brew("--cask")
+    }
+
     /// List installed formulae and casks together with two brew invocations.
     /// Returns `Ok(None)` when the brew executable is missing.
     pub fn list_installed_any(&self) -> Result<Option<Vec<String>>, anyhow::Error> {

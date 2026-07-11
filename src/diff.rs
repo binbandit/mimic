@@ -2,6 +2,7 @@ use crate::config::{Config, Dotfile};
 use crate::expand::expand_path_str;
 use crate::installer::HomebrewManager;
 use crate::linker::rendered_path_for;
+use crate::template::HostContext;
 use crate::zerobrew::ZerobrewManager;
 use colored::Colorize;
 use std::fs;
@@ -14,6 +15,11 @@ pub enum Change {
         description: String,
     },
     Modify {
+        resource_type: ResourceType,
+        description: String,
+        reason: String,
+    },
+    Remove {
         resource_type: ResourceType,
         description: String,
         reason: String,
@@ -61,6 +67,24 @@ impl Change {
                     reason.yellow()
                 )
             }
+            Change::Remove {
+                resource_type,
+                description,
+                reason,
+            } => {
+                let symbol = "-".red().bold();
+                let type_label = match resource_type {
+                    ResourceType::Dotfile => "dotfile",
+                    ResourceType::Package => "package",
+                };
+                format!(
+                    "{} {} {} ({})",
+                    symbol,
+                    type_label,
+                    description.white(),
+                    reason.red()
+                )
+            }
             Change::AlreadyCorrect { description } => {
                 let symbol = "✓".bright_black();
                 format!("{} {}", symbol, description.bright_black())
@@ -90,25 +114,131 @@ impl DiffEngine {
     }
 
     pub fn diff(&self, config: &Config) -> anyhow::Result<Vec<Change>> {
+        let mut changes = self.diff_dotfiles(config, None)?;
+        changes.extend(self.diff_packages(config)?);
+        Ok(changes)
+    }
+
+    /// Diff only the dotfiles section. When `host` is provided, template
+    /// dotfiles whose symlink is correct are additionally checked for content
+    /// drift: the template is re-rendered and compared against the live
+    /// rendered file, catching hand-edits and template/variable changes.
+    pub fn diff_dotfiles(
+        &self,
+        config: &Config,
+        host: Option<&HostContext>,
+    ) -> anyhow::Result<Vec<Change>> {
         let mut changes = Vec::new();
-
         for dotfile in &config.dotfiles {
-            let change = self.diff_dotfile(dotfile)?;
+            let mut change = self.diff_dotfile(dotfile)?;
+            if let (Change::AlreadyCorrect { description }, Some(host_ctx)) = (&change, host)
+                && dotfile.is_template()
+                && let Some(reason) = self.template_drift_reason(dotfile, config, host_ctx)
+            {
+                change = Change::Modify {
+                    resource_type: ResourceType::Dotfile,
+                    description: description.clone(),
+                    reason,
+                };
+            }
             changes.push(change);
         }
+        Ok(changes)
+    }
 
+    /// Diff only the packages section (homebrew + zerobrew).
+    ///
+    /// Installed-package lists are fetched once per manager instead of once
+    /// per package — `brew list` costs a subprocess each time, so this is the
+    /// difference between 2 and N spawns. A missing manager binary means
+    /// nothing is installed.
+    pub fn diff_packages(&self, config: &Config) -> anyhow::Result<Vec<Change>> {
+        let mut changes = Vec::new();
         let normalized_packages = config.packages.normalized();
+
+        let (want_formulae, want_casks) = normalized_packages
+            .homebrew
+            .iter()
+            .fold((false, false), |(f, c), p| {
+                (f || p.pkg_type != "cask", c || p.pkg_type == "cask")
+            });
+        let installed_formulae: Vec<String> = if want_formulae {
+            self.homebrew
+                .try_list_installed_formulae()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let installed_casks: Vec<String> = if want_casks {
+            self.homebrew
+                .try_list_installed_casks()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         for package in &normalized_packages.homebrew {
-            let change = self.diff_package(&package.name, &package.pkg_type)?;
-            changes.push(change);
+            let (installed, type_label) = if package.pkg_type == "cask" {
+                (&installed_casks, "cask")
+            } else {
+                (&installed_formulae, "formula")
+            };
+
+            changes.push(if installed.iter().any(|p| p == &package.name) {
+                Change::AlreadyCorrect {
+                    description: format!("brew {}: {}", type_label, package.name),
+                }
+            } else {
+                Change::Add {
+                    resource_type: ResourceType::Package,
+                    description: format!("{} ({})", package.name, type_label),
+                }
+            });
         }
 
-        for package in &normalized_packages.zerobrew {
-            let change = self.diff_zerobrew_package(&package.name)?;
-            changes.push(change);
+        if !normalized_packages.zerobrew.is_empty() {
+            let installed_zb = self.zerobrew.try_list_installed()?.unwrap_or_default();
+            for package in &normalized_packages.zerobrew {
+                changes.push(if installed_zb.iter().any(|p| p == &package.name) {
+                    Change::AlreadyCorrect {
+                        description: format!("zb: {}", package.name),
+                    }
+                } else {
+                    Change::Add {
+                        resource_type: ResourceType::Package,
+                        description: format!("{} (zb)", package.name),
+                    }
+                });
+            }
         }
 
         Ok(changes)
+    }
+
+    /// Compare the live rendered file against a fresh render of the template.
+    /// Returns a human-readable drift reason, or None when in sync.
+    fn template_drift_reason(
+        &self,
+        dotfile: &Dotfile,
+        config: &Config,
+        host: &HostContext,
+    ) -> Option<String> {
+        let source = expand_path(&dotfile.source).ok()?;
+        let rendered_path = rendered_path_for(&source).ok()?;
+        let live = fs::read_to_string(&rendered_path).ok()?;
+
+        let fresh = match crate::template::render_file(&source, &config.variables, host) {
+            Ok(fresh) => fresh,
+            Err(e) => return Some(format!("template render failed: {}", e)),
+        };
+
+        if live == fresh {
+            return None;
+        }
+
+        Some(
+            "rendered content drifted (live file edited or template/variables changed)".to_string(),
+        )
     }
 
     fn diff_dotfile(&self, dotfile: &Dotfile) -> anyhow::Result<Change> {
@@ -124,6 +254,15 @@ impl DiffEngine {
         }
 
         if !expanded_target.exists() {
+            // exists() follows symlinks, so a dangling link lands here too —
+            // that's drift (the linked file vanished), not a fresh install.
+            if expanded_target.is_symlink() {
+                return Ok(Change::Modify {
+                    resource_type: ResourceType::Dotfile,
+                    description: format!("{}", expanded_target.display()),
+                    reason: "broken symlink (points to a missing file)".to_string(),
+                });
+            }
             return Ok(Change::Add {
                 resource_type: ResourceType::Dotfile,
                 description: format!(
@@ -181,41 +320,6 @@ impl DiffEngine {
                 resource_type: ResourceType::Dotfile,
                 description: format!("{}", expanded_target.display()),
                 reason: format!("points to wrong target: {}", current_link_target.display()),
-            })
-        }
-    }
-
-    fn diff_package(&self, name: &str, package_type: &str) -> anyhow::Result<Change> {
-        let is_installed = self.homebrew.is_installed_any(name, package_type)?;
-        let type_label = if package_type == "cask" {
-            "cask"
-        } else {
-            "formula"
-        };
-
-        if is_installed {
-            Ok(Change::AlreadyCorrect {
-                description: format!("brew {}: {}", type_label, name),
-            })
-        } else {
-            Ok(Change::Add {
-                resource_type: ResourceType::Package,
-                description: format!("{} ({})", name, type_label),
-            })
-        }
-    }
-
-    fn diff_zerobrew_package(&self, name: &str) -> anyhow::Result<Change> {
-        let is_installed = self.zerobrew.is_installed(name)?;
-
-        if is_installed {
-            Ok(Change::AlreadyCorrect {
-                description: format!("zb: {}", name),
-            })
-        } else {
-            Ok(Change::Add {
-                resource_type: ResourceType::Package,
-                description: format!("{} (zb)", name),
             })
         }
     }

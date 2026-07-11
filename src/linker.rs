@@ -163,16 +163,22 @@ fn resolve_conflict(
     }
 }
 
+/// Directory where rendered template output lives (`~/.mimic/rendered`).
+/// Single owner of this path — the linker writes here, diff/doctor read.
+pub fn rendered_dir() -> anyhow::Result<PathBuf> {
+    Ok(directories::BaseDirs::new()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+        .home_dir()
+        .join(".mimic/rendered"))
+}
+
 /// Compute the rendered output path for a template source file.
 ///
 /// Uses a stable hash prefix of the source's absolute path to avoid collisions
 /// when two templates have the same filename in different directories
 /// (e.g., `zsh/config.tmpl` and `git/config.tmpl`).
 pub fn rendered_path_for(source: &Path) -> anyhow::Result<PathBuf> {
-    let rendered_dir = directories::BaseDirs::new()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-        .home_dir()
-        .join(".mimic/rendered");
+    let rendered_dir = rendered_dir()?;
 
     let filename = source
         .file_name()
@@ -394,10 +400,7 @@ fn apply_template_dotfile(
 
     let rendered = render_file(&source, &config.variables, host_context)?;
 
-    let rendered_dir = directories::BaseDirs::new()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-        .home_dir()
-        .join(".mimic/rendered");
+    let rendered_dir = rendered_dir()?;
 
     std::fs::create_dir_all(&rendered_dir)?;
     // Rendered files can contain keychain secrets, so keep the directory and
