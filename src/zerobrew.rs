@@ -44,14 +44,6 @@ impl ZerobrewManager {
         })
     }
 
-    /// Check if a package is installed. A missing zb executable means the
-    /// package is not installed rather than an error.
-    pub fn is_installed(&self, name: &str) -> Result<bool, anyhow::Error> {
-        Ok(self
-            .try_list()?
-            .is_some_and(|installed| installed.iter().any(|pkg| pkg == name)))
-    }
-
     pub fn uninstall_many(&self, names: &[&str]) -> Result<Vec<String>, anyhow::Error> {
         if names.is_empty() {
             return Ok(Vec::new());

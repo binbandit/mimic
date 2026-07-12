@@ -111,15 +111,6 @@ impl HomebrewManager {
         }
     }
 
-    /// Check if a package is installed, routing to formula or cask based on type.
-    pub fn is_installed_any(&self, name: &str, package_type: &str) -> Result<bool, anyhow::Error> {
-        if package_type == "cask" {
-            self.is_installed_cask(name)
-        } else {
-            self.is_installed(name)
-        }
-    }
-
     pub fn uninstall_many(&self, names: &[&str]) -> Result<Vec<String>, anyhow::Error> {
         if names.is_empty() {
             return Ok(Vec::new());
