@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use crate::spinner::Spinner;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Hook {
     #[serde(rename = "rustup")]
     Rustup {

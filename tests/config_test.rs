@@ -571,3 +571,30 @@ fn test_host_aliases_parse() {
         vec!["work.local", "wrk"]
     );
 }
+
+#[test]
+fn test_unknown_hook_key_is_error() {
+    // Hooks are an internally-tagged enum; unknown keys inside an entry must
+    // fail too, not just typos at the struct level.
+    let toml_str = r#"
+        [[hooks]]
+        type = "command"
+        name = "test"
+        command = "echo hi"
+        on_failure = "continue"
+        only_role = ["work"]
+    "#;
+
+    let err = Config::from_str(toml_str).unwrap_err().to_string();
+    assert!(err.contains("unknown field"), "got: {}", err);
+}
+
+#[test]
+fn test_unknown_hook_type_is_error() {
+    let toml_str = r#"
+        [[hooks]]
+        type = "not-a-real-hook"
+    "#;
+
+    assert!(Config::from_str(toml_str).is_err());
+}
