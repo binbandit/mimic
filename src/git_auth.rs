@@ -7,6 +7,7 @@
 //! 3. Runs `gh auth login` interactively
 //! 4. Runs `gh auth setup-git` to configure git credential helper
 
+use crate::installer::brew_command;
 use colored::Colorize;
 use std::process::Command;
 
@@ -40,7 +41,7 @@ fn is_gh_authenticated() -> bool {
 /// Install `gh` via Homebrew.
 fn install_gh_via_brew() -> anyhow::Result<()> {
     println!("  {} Installing GitHub CLI...", "→".blue());
-    let output = Command::new("brew")
+    let output = brew_command()
         .args(["install", "gh"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run brew install gh: {}", e))?;

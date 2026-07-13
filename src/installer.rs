@@ -5,16 +5,25 @@ use std::process::Command;
 
 pub struct HomebrewManager;
 
+/// Build a `brew` command that never prompts for consent.
+///
+/// Homebrew 5.1+ asks "Do you want to proceed? [y/n]" before installs and
+/// upgrades by default. Every brew invocation here captures output behind a
+/// spinner, so the prompt is invisible and brew blocks forever waiting for
+/// input. `HOMEBREW_NO_ASK` is the supported opt-out; older brew versions
+/// simply ignore it (unlike the `--no-ask` flag, which they reject).
+pub(crate) fn brew_command() -> Command {
+    let mut cmd = Command::new("brew");
+    cmd.env("HOMEBREW_NO_ASK", "1");
+    cmd
+}
+
 /// Runs `brew list <flag> -1` and returns the installed package names.
 /// Returns `Ok(None)` when the brew executable itself is missing, so callers
 /// can decide whether that is an error (install/uninstall) or simply means
 /// "nothing is installed" (diff/status on a machine without Homebrew).
 fn try_list_brew(flag: &str) -> Result<Option<Vec<String>>, anyhow::Error> {
-    let output = Command::new("brew")
-        .arg("list")
-        .arg(flag)
-        .arg("-1")
-        .output();
+    let output = brew_command().arg("list").arg(flag).arg("-1").output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -91,7 +100,7 @@ impl HomebrewManager {
     /// against `brew list` would flag every auto-installed dependency as
     /// "extra", so clean uses this instead.
     pub fn list_leaves(&self) -> Result<Vec<String>, anyhow::Error> {
-        let output = Command::new("brew").arg("leaves").output();
+        let output = brew_command().arg("leaves").output();
 
         match output {
             Ok(output) if output.status.success() => {
@@ -118,7 +127,7 @@ impl HomebrewManager {
 
         let spinner = Spinner::new(format!("Uninstalling {} packages...", names.len()));
 
-        let output = Command::new("brew").arg("uninstall").args(names).output();
+        let output = brew_command().arg("uninstall").args(names).output();
 
         match output {
             Ok(output) if output.status.success() => {
@@ -166,7 +175,7 @@ impl HomebrewManager {
 
         let spinner = Spinner::new(format!("Installing {} (cask)...", name));
 
-        let output = Command::new("brew")
+        let output = brew_command()
             .arg("install")
             .arg("--cask")
             .arg(name)
@@ -253,10 +262,7 @@ impl HomebrewManager {
             if to_install.len() == 1 { "" } else { "e" }
         ));
 
-        let output = Command::new("brew")
-            .arg("install")
-            .args(&to_install)
-            .output();
+        let output = brew_command().arg("install").args(&to_install).output();
 
         match output {
             Ok(output) if output.status.success() => {
@@ -340,5 +346,14 @@ mod tests {
     #[test]
     fn test_homebrew_manager_default() {
         let _manager = HomebrewManager;
+    }
+
+    #[test]
+    fn test_brew_command_opts_out_of_consent_prompt() {
+        let cmd = brew_command();
+        assert_eq!(cmd.get_program(), "brew");
+        assert!(cmd.get_envs().any(|(key, value)| {
+            key == "HOMEBREW_NO_ASK" && value == Some(std::ffi::OsStr::new("1"))
+        }));
     }
 }

@@ -214,6 +214,11 @@ fn execute_hook(hook: &Hook, verbose: bool) -> anyhow::Result<bool> {
 /// is discarded and stderr is captured, then echoed (last 20 lines) when the
 /// command fails so the cause isn't thrown away.
 fn run_hook_command(cmd: &mut Command, verbose: bool) -> anyhow::Result<std::process::ExitStatus> {
+    // Hooks commonly shell out to brew (e.g. `run = "brew upgrade"`), and
+    // Homebrew 5.1+ prompts for y/n consent by default. With output captured
+    // the prompt is invisible and the hook hangs forever, so opt out here.
+    cmd.env("HOMEBREW_NO_ASK", "1");
+
     if verbose {
         return Ok(cmd
             .stdout(Stdio::inherit())
